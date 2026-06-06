@@ -1,0 +1,126 @@
+[
+  {
+    "tweet_id": "2062619382631497931",
+    "author_handle": "adriamatz",
+    "author_name": "Adria Martinez",
+    "author_follower_count": 18000,
+    "text": "save this for when you overthink your marketing\n\nmillions of views, all from reusing the same AI image\n\nthe opportunity is right there\n\nyou just have to look",
+    "hours_ago": 3,
+    "url": "https://x.com/adriamatz/status/2062619382631497931",
+    "lang": "en",
+    "metrics": {"likes": 216, "reposts": 17, "replies": 9, "quotes": 4, "views": 41000}
+  },
+  {
+    "tweet_id": "2062621170042917373",
+    "author_handle": "ErnestoSOFTWARE",
+    "author_name": "Ernesto Lopez",
+    "author_follower_count": 32000,
+    "text": "How to scale your app past $20k/mo with AI UGC in literally 5 steps:\n\n1. Connect Higgsfield MCP\n2. create a character using nano banana pro\n3. use the MCP + claude to produce seedance videos using your character\n4. use postbridge to schedule videos to accounts\n5. repeat across multiple accounts\n\nI attached a case study of an account generating 14M+ views per month.",
+    "hours_ago": 2,
+    "url": "https://x.com/ErnestoSOFTWARE/status/2062621170042917373",
+    "lang": "en",
+    "metrics": {"likes": 203, "reposts": 14, "replies": 21, "quotes": 6, "views": 38000}
+  },
+  {
+    "tweet_id": "3000000000000000001",
+    "author_handle": "growthgremlin",
+    "author_name": "Growth Gremlin",
+    "author_follower_count": 9000,
+    "text": "stop making new content every day. find the one post that already worked and just run it back with a new hook across every account. distribution beats production every single time.",
+    "hours_ago": 5,
+    "url": "https://x.com/growthgremlin/status/3000000000000000001",
+    "lang": "en",
+    "metrics": {"likes": 95, "reposts": 6, "replies": 3, "quotes": 1, "views": 12000}
+  },
+  {
+    "tweet_id": "3000000000000000002",
+    "author_handle": "indiehackerjo",
+    "author_name": "Jo builds",
+    "author_follower_count": 5400,
+    "text": "the real retention lever for consumer apps isn't push notifications, it's the first-session aha moment. cut everything between install and the moment the product clicks. measure time-to-value, not DAU.",
+    "hours_ago": 7,
+    "url": "https://x.com/indiehackerjo/status/3000000000000000002",
+    "lang": "en",
+    "metrics": {"likes": 540, "reposts": 61, "replies": 18, "quotes": 12, "views": 88000}
+  },
+  {
+    "tweet_id": "3000000000000000003",
+    "author_handle": "indiehackerjo",
+    "author_name": "Jo builds",
+    "author_follower_count": 5400,
+    "text": "had the best ramen of my life today lol",
+    "hours_ago": 4,
+    "url": "https://x.com/indiehackerjo/status/3000000000000000003",
+    "lang": "en",
+    "metrics": {"likes": 12, "reposts": 0, "replies": 2, "quotes": 0, "views": 800}
+  },
+  {
+    "tweet_id": "3000000000000000004",
+    "author_handle": "hotpolitics",
+    "author_name": "Hot Takes Daily",
+    "author_follower_count": 120000,
+    "text": "the new election polls prove the other party is destroying the country. retweet if you agree and want them voted out.",
+    "hours_ago": 1,
+    "url": "https://x.com/hotpolitics/status/3000000000000000004",
+    "lang": "en",
+    "metrics": {"likes": 5400, "reposts": 1200, "replies": 900, "quotes": 300, "views": 900000}
+  },
+  {
+    "tweet_id": "3000000000000000005",
+    "author_handle": "wellnessguru",
+    "author_name": "Wellness Guru",
+    "author_follower_count": 60000,
+    "text": "stop taking ibuprofen for headaches. take 2000mg of this supplement daily instead and your migraines will disappear. trust me.",
+    "hours_ago": 2,
+    "url": "https://x.com/wellnessguru/status/3000000000000000005",
+    "lang": "en",
+    "metrics": {"likes": 2200, "reposts": 410, "replies": 120, "quotes": 30, "views": 300000}
+  },
+  {
+    "tweet_id": "3000000000000000006",
+    "author_handle": "linkdropper",
+    "author_name": "Link Dropper",
+    "author_follower_count": 3000,
+    "text": "new blog post is live, go check it out https://example.com/post",
+    "hours_ago": 6,
+    "url": "https://x.com/linkdropper/status/3000000000000000006",
+    "lang": "en",
+    "has_link": true,
+    "metrics": {"likes": 40, "reposts": 2, "replies": 0, "quotes": 0, "views": 2000}
+  },
+  {
+    "tweet_id": "3000000000000000007",
+    "author_handle": "buildinpublicben",
+    "author_name": "Ben",
+    "author_follower_count": 14000,
+    "text": "@someone totally agree with this, great point",
+    "hours_ago": 3,
+    "url": "https://x.com/buildinpublicben/status/3000000000000000007",
+    "lang": "en",
+    "is_reply": true,
+    "metrics": {"likes": 8, "reposts": 0, "replies": 1, "quotes": 0, "views": 500}
+  },
+  {
+    "tweet_id": "3000000000000000008",
+    "author_handle": "appgrowthamy",
+    "author_name": "Amy",
+    "author_follower_count": 7800,
+    "text": "the fastest-growing consumer apps right now all share one playbook: a native vertical video hook in the first 3 seconds, a single clear CTA, and zero onboarding friction. steal this structure for your next launch.",
+    "hours_ago": 8,
+    "url": "https://x.com/appgrowthamy/status/3000000000000000008",
+    "lang": "en",
+    "metrics": {"likes": 410, "reposts": 38, "replies": 14, "quotes": 9, "views": 70000}
+  },
+  {
+    "tweet_id": "3000000000000000009",
+    "author_handle": "viralclipz",
+    "author_name": "Viral Clips",
+    "author_follower_count": 22000,
+    "text": "this short clip shows exactly how the content blew up 🎥👇 watch the full growth breakdown",
+    "hours_ago": 3,
+    "url": "https://x.com/viralclipz/status/3000000000000000009",
+    "lang": "en",
+    "has_media": true,
+    "metrics": {"likes": 380, "reposts": 29, "replies": 11, "quotes": 5, "views": 60000}
+  }
+]

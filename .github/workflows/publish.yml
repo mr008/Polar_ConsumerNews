@@ -1,0 +1,27 @@
+name: publish
+
+# Posts due items 3x/day. Only acts when mode.autonomous is true; otherwise it
+# just reports what's awaiting manual review. Times are jittered windows, UTC.
+on:
+  schedule:
+    - cron: "31 16 * * *"    # ~morning PT
+    - cron: "47 20 * * *"    # ~midday PT
+    - cron: "13 2 * * *"     # ~evening PT
+  workflow_dispatch: {}
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -e .
+      - name: publish due
+        env:
+          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          X_USER_ID: ${{ secrets.X_USER_ID }}
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+        run: xbot publish
