@@ -57,12 +57,6 @@ collect ─▶ score ─▶ draft ─▶ [review] ─▶ publish
 | 4 | Implement `publish/api_publisher.py` (POST /2/tweets quote_tweet_id) |
 | 5 | Flip `mode.autonomous: true`; deploy via `.github/workflows/` + Turso |
 
-## Tests
-
-```powershell
-pip install -e ".[dev]"
-pytest
-```
 
 ## Safety
 
