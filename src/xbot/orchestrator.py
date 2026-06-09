@@ -176,4 +176,8 @@ class Orchestrator:
             "pending_drafts": len(self.repo.pending_drafts()),
             "watching": len(self.repo.candidates("watching")),
             "skipped": len(self.repo.candidates("skipped")),
+            "activity": {
+                "posted": self.repo.activity_posted(72),
+                "problems": self.repo.activity_drafts(["failed", "blocked", "stale"], 72),
+            },
         }

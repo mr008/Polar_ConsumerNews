@@ -147,9 +147,22 @@ def cmd_run(args):
 def cmd_report(args):
     orch = _setup(args)
     r = orch.report()
+    activity = r.pop("activity", {})
     print("Daily report")
     for k, v in r.items():
         print(f"  {k:<16} {v}")
+
+    posted = activity.get("posted", [])
+    problems = activity.get("problems", [])
+    print(f"\nActivity log (last 72h) — {len(posted)} posted, {len(problems)} problem(s)")
+    for e in posted:
+        when = e["posted_at"][:16].replace("T", " ")
+        print(f"  ✓ {when} UTC  h/t @{e['author']}  {e['url']}")
+        print(f"      {e['commentary']}")
+    for e in problems:
+        print(f"  ✗ [{e['status']}] draft #{e['draft_id']} (@{e['author']})  {e['note']}")
+    if not posted and not problems:
+        print("  (nothing posted, no failures)")
 
 
 def main(argv=None):

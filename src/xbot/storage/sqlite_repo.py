@@ -303,6 +303,39 @@ class SqliteRepository:
         )
         self.conn.commit()
 
+    # ---------- activity log (surfaced by `xbot report`) ----------
+    def activity_posted(self, within_hours: float = 72) -> list[dict]:
+        cutoff = (utcnow() - timedelta(hours=within_hours)).isoformat()
+        rows = self.conn.execute(
+            "SELECT posted_at, author_handle, our_tweet_id, commentary FROM posted_log "
+            "WHERE posted_at >= ? ORDER BY posted_at DESC",
+            (cutoff,),
+        ).fetchall()
+        return [{
+            "posted_at": r["posted_at"],
+            "author": r["author_handle"],
+            "url": f"https://x.com/i/status/{r['our_tweet_id']}" if r["our_tweet_id"] else "",
+            "commentary": ((r["commentary"] or "").splitlines() or [""])[0][:100],
+        } for r in rows]
+
+    def activity_drafts(self, statuses: list[str], within_hours: float = 72) -> list[dict]:
+        """Drafts that went wrong (failed/blocked/stale), newest first. The time
+        filter uses the draft's created_at (drafts expire at 48h anyway)."""
+        cutoff = (utcnow() - timedelta(hours=within_hours)).isoformat()
+        qmarks = ",".join("?" * len(statuses))
+        rows = self.conn.execute(
+            f"SELECT d.id, d.status, d.note, d.safety_notes, d.tweet_id, p.author_handle "
+            f"FROM drafts d LEFT JOIN posts p ON p.tweet_id = d.tweet_id "
+            f"WHERE d.status IN ({qmarks}) AND d.created_at >= ? ORDER BY d.id DESC",
+            (*statuses, cutoff),
+        ).fetchall()
+        return [{
+            "draft_id": r["id"],
+            "status": r["status"],
+            "author": r["author_handle"] or "?",
+            "note": (r["note"] or r["safety_notes"] or "")[:200],
+        } for r in rows]
+
     def count_posted_today(self) -> int:
         start = utcnow().replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
         r = self.conn.execute(

@@ -131,3 +131,20 @@ def test_unsafe_draft_never_posts(tmp_path):
     result = _orch(tmp_path, repo, pub).publish_due()
     assert result["status"] == "queue_empty"
     assert pub.published == []
+
+
+def test_report_activity_log(tmp_path):
+    repo = _repo()
+    _queue(repo, "1", quote_score=0.9)
+    _queue(repo, "2", quote_score=0.5)
+    pub = _FakePublisher(fail_ids={"1"})
+    orch = _orch(tmp_path, repo, pub)
+    orch.publish_due()  # "1" fails -> skip to "2", which posts
+
+    activity = orch.report()["activity"]
+    assert len(activity["posted"]) == 1
+    assert activity["posted"][0]["url"] == "https://x.com/i/status/our_2"
+    assert activity["posted"][0]["author"] == "alice"
+    assert len(activity["problems"]) == 1
+    assert activity["problems"][0]["status"] == "failed"
+    assert "403 simulated" in activity["problems"][0]["note"]
