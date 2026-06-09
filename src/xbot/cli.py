@@ -117,6 +117,14 @@ def cmd_review(args):
             print("  skipped")
 
 
+def cmd_approve(args):
+    orch = _setup(args)
+    res = orch.approve(args.draft_id)
+    print("approve:", res)
+    if res.get("our_id"):
+        print("posted -> https://x.com/i/status/" + res["our_id"])
+
+
 def cmd_publish(args):
     orch = _setup(args)
     result = orch.publish_due()
@@ -161,6 +169,9 @@ def main(argv=None):
     p_score.set_defaults(func=cmd_score)
     sub.add_parser("draft").set_defaults(func=cmd_draft)
     sub.add_parser("review").set_defaults(func=cmd_review)
+    p_approve = sub.add_parser("approve")
+    p_approve.add_argument("draft_id", type=int)
+    p_approve.set_defaults(func=cmd_approve)
     sub.add_parser("publish").set_defaults(func=cmd_publish)
     sub.add_parser("run").set_defaults(func=cmd_run)
     sub.add_parser("report").set_defaults(func=cmd_report)

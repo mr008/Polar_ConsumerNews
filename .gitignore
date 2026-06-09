@@ -25,3 +25,10 @@ venv/
 Thumbs.db
 .vscode/
 .idea/
+
+# Local one-off diagnostic scripts (not part of the app)
+/verify_x.py
+/quote_test.py
+/diag_quote.py
+/recheck.py
+/self_quote.py

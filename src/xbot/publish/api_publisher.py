@@ -10,12 +10,14 @@ from __future__ import annotations
 import os
 
 from ..models import Draft, Post
+from .publisher import compose_text
 
 API_BASE = "https://api.x.com/2"
 
 
 class ApiPublisher:
-    def __init__(self):
+    def __init__(self, cfg=None):
+        self.cfg = cfg
         self.ck = os.environ["X_API_KEY"]
         self.cs = os.environ["X_API_SECRET"]
         self.at = os.environ["X_ACCESS_TOKEN"]
@@ -24,12 +26,22 @@ class ApiPublisher:
     def publish(self, draft: Draft, post: Post) -> dict:
         from requests_oauthlib import OAuth1Session  # lazy import
 
+        session = OAuth1Session(self.ck, self.cs, self.at, self.ats)
+        text, link_mode = compose_text(draft, post, self.cfg)
+
+        # Link mode: cross-account quote_tweet_id is broken (X, ~Feb 2026). Post the
+        # commentary + source URL standalone (URL counts toward the $0.20 write tier).
+        if link_mode:
+            resp = session.post(f"{API_BASE}/tweets", json={"text": text}, timeout=30)
+            resp.raise_for_status()
+            return {"ok": True, "id": resp.json().get("data", {}).get("id", ""), "mode": "link"}
+
         if "http://" in draft.commentary or "https://" in draft.commentary:
             raise ValueError("commentary contains a URL — refusing (13x cost + voice rule)")
-
-        session = OAuth1Session(self.ck, self.cs, self.at, self.ats)
+        # For retweets the timeline id is the RT wrapper (never quotable) — quote the original.
+        quote_id = post.canonical_id if post.is_retweet else post.tweet_id
         resp = session.post(f"{API_BASE}/tweets",
-                            json={"text": draft.commentary, "quote_tweet_id": post.tweet_id},
+                            json={"text": draft.commentary, "quote_tweet_id": quote_id},
                             timeout=30)
         quoted = True
 

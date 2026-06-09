@@ -75,6 +75,10 @@ posting:
   jitter_minutes: 25
   min_gap_minutes: 90
   author_cooldown_days: 5
+  # Cross-account quote_tweet_id is broken (X, ~Feb 2026). Instead, post standalone
+  # and append the source URL — X often auto-embeds it as a quote card, and it's a
+  # clickable link either way. NOTE: a URL bumps the write to ~$0.20/post (vs $0.015).
+  link_instead_of_quote: true
 
 safety:
   exclude: [politics, ragebait, nsfw, harassment, personal_drama, medical_advice, legal_advice, investment_advice]
@@ -103,7 +107,7 @@ llm:
   commentary_model: "claude-sonnet-4-6"            # Sonnet — the public voice
   classifier_model: "claude-haiku-4-5-20251001"    # (legacy field; judge_model below is used)
   embeddings_model: "text-embedding-3-small"
-  max_commentary_chars: 240
+  max_commentary_chars: 230    # leaves room for the appended source URL (link mode)
   temperature: 0.7
 
 ops:
