@@ -164,6 +164,24 @@ def cmd_report(args):
     if not posted and not problems:
         print("  (nothing posted, no failures)")
 
+    runs = activity.get("runs", [])
+    if runs:
+        print("\nRun log (last 72h)")
+        totals = {"read": 0, "judged": 0, "drafted": 0, "posted": 0}
+        for e in runs:
+            when = e["ts"][5:16].replace("T", " ")  # MM-DD HH:MM
+            parts = [f"{k}={e[k]}" for k in totals if e[k]]
+            if e["kind"] == "publish" and e["detail"]:
+                parts.append(e["detail"])
+            print(f"  {when} {e['tz']}  {e['kind']:<8} {' '.join(parts)}")
+            for k in totals:
+                totals[k] += e[k]
+        # Display-only spend estimate: reads ~$0.005/post, writes ~$0.20 (link mode).
+        est = totals["read"] * 0.005 + totals["posted"] * 0.20
+        print(f"  totals: read {totals['read']} · judged {totals['judged']} · "
+              f"drafted {totals['drafted']} · posted {totals['posted']}"
+              f"  (≈${est:.2f} X API spend)")
+
 
 def main(argv=None):
     # Windows consoles default to cp1252; the UI uses unicode (•, ✓, box chars).

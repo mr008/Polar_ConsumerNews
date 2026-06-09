@@ -73,6 +73,18 @@ CREATE TABLE IF NOT EXISTS posted_log (
     posted_at_pt TEXT
 );
 
+CREATE TABLE IF NOT EXISTS run_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT,
+    ts_pt TEXT,
+    kind TEXT,
+    n_read INTEGER DEFAULT 0,
+    n_judged INTEGER DEFAULT 0,
+    n_drafted INTEGER DEFAULT 0,
+    n_posted INTEGER DEFAULT 0,
+    detail TEXT
+);
+
 CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT);
 
 CREATE INDEX IF NOT EXISTS idx_posts_author ON posts(author_handle);
@@ -314,6 +326,34 @@ class SqliteRepository:
              now.isoformat(), to_local(now, self.tz_name).isoformat()),
         )
         self.conn.commit()
+
+    # ---------- run log (per-run counters: read/judged/drafted/posted) ----------
+    def log_run(self, kind: str, read: int = 0, judged: int = 0, drafted: int = 0,
+                posted: int = 0, detail: str = "") -> None:
+        now = utcnow()
+        self.conn.execute(
+            "INSERT INTO run_log (ts, ts_pt, kind, n_read, n_judged, n_drafted, "
+            "n_posted, detail) VALUES (?,?,?,?,?,?,?,?)",
+            (now.isoformat(), to_local(now, self.tz_name).isoformat(), kind,
+             read, judged, drafted, posted, (detail or "")[:300]),
+        )
+        self.conn.commit()
+
+    def recent_runs(self, within_hours: float = 72) -> list[dict]:
+        cutoff = (utcnow() - timedelta(hours=within_hours)).isoformat()
+        rows = self.conn.execute(
+            "SELECT ts, kind, n_read, n_judged, n_drafted, n_posted, detail "
+            "FROM run_log WHERE ts >= ? ORDER BY ts ASC",
+            (cutoff,),
+        ).fetchall()
+        out = []
+        for r in rows:
+            local = to_local(r["ts"], self.tz_name)
+            out.append({"ts": local.isoformat(), "tz": local.tzname() or "UTC",
+                        "kind": r["kind"], "read": r["n_read"], "judged": r["n_judged"],
+                        "drafted": r["n_drafted"], "posted": r["n_posted"],
+                        "detail": r["detail"] or ""})
+        return out
 
     # ---------- activity log (surfaced by `xbot report`) ----------
     def activity_posted(self, within_hours: float = 72) -> list[dict]:

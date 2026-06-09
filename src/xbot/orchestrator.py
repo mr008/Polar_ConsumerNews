@@ -51,11 +51,13 @@ class Orchestrator:
             self.repo.upsert_post(p)
             if not self.repo.has_posted(p.tweet_id):
                 self.repo.set_candidate(p.tweet_id, "watching")
+        self.repo.log_run("collect", read=len(posts))  # n paid API reads this run
         return len(posts)
 
     def score(self) -> tuple[list[Post], list[Score]]:
         posts = self.repo.recent_posts(72)
         judge_posts = prefilter_for_judge(posts, self.cfg)
+        self.judged_count = len(judge_posts)  # posts sent to the LLM judge
         judged = self.judge.score_batch(judge_posts)            # semantic topic + teaching
         self.judge_reasons = {tid: reason for tid, (_, _, reason) in judged.items()}
         teaching = {tid: score for tid, (score, _, _) in judged.items()}
@@ -99,10 +101,20 @@ class Orchestrator:
                                     "" if ok else notes)
             created.append({"draft_id": draft_id, "draft": draft, "post": post,
                             "score": score, "ok": ok, "notes": notes})
+        self.repo.log_run("draft", judged=getattr(self, "judged_count", 0),
+                          drafted=len(created))
         return created
 
     # ---------- publisher flow ----------
     def publish_due(self) -> dict:
+        result = self._publish_due()
+        detail = result["status"]
+        for f in result.get("failed", []):
+            detail += f" | draft #{f['draft_id']}: {f['error'][:80]}"
+        self.repo.log_run("publish", posted=result.get("count", 0), detail=detail)
+        return result
+
+    def _publish_due(self) -> dict:
         if kill_switch_active(self.cfg):
             return {"status": "killed"}
         per_day = self.cfg.get("posting.per_day", 3)
@@ -179,5 +191,6 @@ class Orchestrator:
             "activity": {
                 "posted": self.repo.activity_posted(72),
                 "problems": self.repo.activity_drafts(["failed", "blocked", "stale"], 72),
+                "runs": self.repo.recent_runs(72),
             },
         }

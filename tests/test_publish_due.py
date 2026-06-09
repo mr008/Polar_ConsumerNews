@@ -152,6 +152,26 @@ def test_posted_times_stored_and_reported_in_pt(tmp_path):
     assert entry["posted_at"].endswith(("-07:00", "-08:00"))
 
 
+def test_run_log_records_publish_counts(tmp_path):
+    repo = _repo()
+    _queue(repo, "1", quote_score=0.9)
+    _queue(repo, "2", quote_score=0.5)
+    pub = _FakePublisher(fail_ids={"1"})
+    orch = _orch(tmp_path, repo, pub)
+    orch.publish_due()
+    repo.log_run("collect", read=81)
+    repo.log_run("draft", judged=15, drafted=2)
+
+    runs = orch.report()["activity"]["runs"]
+    assert [r["kind"] for r in runs] == ["publish", "collect", "draft"]
+    publish_row = runs[0]
+    assert publish_row["posted"] == 1
+    assert "posted" in publish_row["detail"]
+    assert "403 simulated" in publish_row["detail"]   # failure recorded
+    assert runs[1]["read"] == 81
+    assert runs[2]["judged"] == 15 and runs[2]["drafted"] == 2
+
+
 def test_report_activity_log(tmp_path):
     repo = _repo()
     _queue(repo, "1", quote_score=0.9)
