@@ -17,7 +17,7 @@ from pathlib import Path
 
 from .config import db_path, load_config
 from .orchestrator import Orchestrator
-from .storage import SqliteRepository
+from .storage import get_repository
 
 
 def load_dotenv(path: str = ".env") -> None:
@@ -38,7 +38,7 @@ def load_dotenv(path: str = ".env") -> None:
 def _setup(args) -> Orchestrator:
     load_dotenv()
     cfg = load_config(args.config)
-    repo = SqliteRepository(db_path(cfg))
+    repo = get_repository(cfg)
     repo.init_schema()
     return Orchestrator(cfg, repo)
 
@@ -51,9 +51,10 @@ def _fmt_score(s) -> str:
 def cmd_initdb(args):
     load_dotenv()
     cfg = load_config(args.config)
-    repo = SqliteRepository(db_path(cfg))
+    repo = get_repository(cfg)
     repo.init_schema()
-    print(f"✓ schema ready at {db_path(cfg)}")
+    backend = "Turso" if __import__("os").environ.get("TURSO_DATABASE_URL") else db_path(cfg)
+    print(f"✓ schema ready ({backend})")
 
 
 def cmd_collect(args):
@@ -177,7 +178,15 @@ def main(argv=None):
     sub.add_parser("report").set_defaults(func=cmd_report)
 
     args = parser.parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    finally:
+        # libsql's sync client keeps a non-daemon thread alive; close it so we exit.
+        try:
+            from .storage.turso_repo import close_all
+            close_all()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
