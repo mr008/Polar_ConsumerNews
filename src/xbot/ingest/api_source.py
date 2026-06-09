@@ -3,7 +3,8 @@ user context (the 4 keys in .env). Requires `pip install -e ".[x]"`.
 
   Endpoint: GET /2/users/:id/timelines/reverse_chronological
   Auth:     OAuth 1.0a (API key/secret + access token/secret) — long-lived.
-  Cost:     ~$0.005 per post returned. `max_posts_per_day` caps spend.
+  Cost:     ~$0.005 per post RETURNED (not per unique post). `since_id` skips
+            everything already read; `max_posts_per_day` caps spend per run.
 """
 from __future__ import annotations
 
@@ -24,7 +25,7 @@ class ApiSourceAdapter:
         self.uid = os.environ["X_USER_ID"]
         self.max = max_posts_per_day
 
-    def fetch_timeline(self, limit: int = 120) -> list[Post]:
+    def fetch_timeline(self, limit: int = 120, since_id: str | None = None) -> list[Post]:
         from requests_oauthlib import OAuth1Session  # lazy import
 
         limit = min(limit, self.max)
@@ -36,6 +37,11 @@ class ApiSourceAdapter:
             "expansions": "author_id",
             "user.fields": "public_metrics,username,name",
         }
+        # READ-DEDUP: X bills per post RETURNED, so without since_id every run
+        # re-buys posts the previous run already paid for. With it, `limit`
+        # becomes a safety ceiling instead of a guaranteed spend.
+        if since_id:
+            params["since_id"] = since_id
         posts: list[Post] = []
         token, pages = None, 0
         while len(posts) < limit and pages < 10:

@@ -44,7 +44,9 @@ class Orchestrator:
     # ---------- collector flow ----------
     def collect(self) -> int:
         cap = self.cfg.get("scoping.max_posts_per_day", 120)
-        posts = self.source.fetch_timeline(cap)
+        # since_id = read-dedup: only fetch (and pay for) posts newer than the
+        # newest one already in the DB.
+        posts = self.source.fetch_timeline(cap, since_id=self.repo.max_seen_tweet_id())
         for p in posts:
             self.repo.upsert_post(p)
             if not self.repo.has_posted(p.tweet_id):
@@ -74,8 +76,14 @@ class Orchestrator:
             if not self.repo.has_posted(post.tweet_id):
                 self.repo.set_candidate(post.tweet_id, "skipped", reason)
 
+        # Drop drafts whose moment has passed, then TOP UP the standby queue to
+        # per_day+1: enough that every window has one fallback if the best post
+        # fails, without paying for commentary that will never be used.
+        self.repo.expire_stale_drafts(self.cfg.get("posting.draft_max_age_hours", 48))
         pending_ids = {tid for tid, _, _ in self.repo.pending_drafts()}
-        limit = limit or (self.cfg.get("posting.per_day", 3) + 2)
+        if limit is None:
+            queue_target = self.cfg.get("posting.per_day", 3) + 1
+            limit = max(0, queue_target - len(pending_ids))
         created: list[dict] = []
         for score, post in eligible:
             if len(created) >= limit:
@@ -103,14 +111,37 @@ class Orchestrator:
             return {"status": "cap_reached", "posted_today": self.repo.count_posted_today()}
         if not self.cfg.get("mode.autonomous", False):
             return {"status": "review_required", "pending": len(self.repo.pending_drafts())}
-        results = []
-        for draft_id, draft, post in self.repo.pending_drafts():
-            if len(results) >= remaining:
+        # Each scheduled window posts ONE draft (3 windows/day); per_day stays the
+        # hard cap so a manual re-run can't overshoot.
+        self.repo.expire_stale_drafts(self.cfg.get("posting.draft_max_age_hours", 48))
+        budget = min(remaining, self.cfg.get("posting.per_run", 1))
+        results, failures = [], []
+        for draft_id, draft, post in self._ranked_pending():
+            if len(results) >= budget:
                 break
             if not draft.safety_passed:
                 continue
-            results.append(self._publish(draft_id, draft, post))
-        return {"status": "posted", "count": len(results), "results": results}
+            if self.repo.has_posted(post.tweet_id) or self.repo.has_posted(post.canonical_id):
+                self.repo.set_draft_status(draft_id, "duplicate")
+                continue
+            try:
+                results.append(self._publish(draft_id, draft, post))
+            except Exception as e:  # skip-on-failure: mark it and try the next-best draft
+                err = f"{type(e).__name__}: {e}"
+                self.repo.set_draft_status(draft_id, "failed", err[:500])
+                failures.append({"draft_id": draft_id, "tweet_id": post.tweet_id,
+                                 "error": err[:200]})
+        status = "posted" if results else ("all_failed" if failures else "queue_empty")
+        return {"status": status, "count": len(results), "results": results,
+                "failed": failures}
+
+    def _ranked_pending(self) -> list[tuple[int, Draft, Post]]:
+        """Pending drafts, best quote_score first — the queue is stored FIFO, but
+        each window should post the strongest candidate available right now."""
+        def quote_score(row) -> float:
+            s = self.repo.get_score(row[2].tweet_id)
+            return s.quote_score if s else 0.0
+        return sorted(self.repo.pending_drafts(), key=quote_score, reverse=True)
 
     def approve(self, draft_id: int) -> dict:
         row = self.repo.get_draft(draft_id)

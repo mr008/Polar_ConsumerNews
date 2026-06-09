@@ -17,7 +17,9 @@ class SampleSource:
     def __init__(self, fixture_path: str = "fixtures/sample_posts.json"):
         self.fixture_path = Path(fixture_path)
 
-    def fetch_timeline(self, limit: int = 120) -> list[Post]:
+    def fetch_timeline(self, limit: int = 120, since_id: str | None = None) -> list[Post]:
+        # since_id is accepted for interface parity with ApiSourceAdapter; the
+        # fixture is small and free, so we never filter it.
         if not self.fixture_path.exists():
             raise SystemExit(f"fixture not found: {self.fixture_path.resolve()}")
         raw = json.loads(self.fixture_path.read_text(encoding="utf-8"))

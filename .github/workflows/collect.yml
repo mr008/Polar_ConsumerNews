@@ -1,7 +1,8 @@
 name: collect
 
 # Reads the feed, judges it (Claude), and drafts commentary into Turso.
-# Budget-conscious cadence (every 6h); 24h read-dedup keeps cost ~unique-posts.
+# Budget-conscious cadence (every 6h). since_id read-dedup means each run only
+# pays for posts newer than the last one stored (cap 50/run = hard ceiling).
 on:
   schedule:
     - cron: "0 */6 * * *"     # every 6 hours

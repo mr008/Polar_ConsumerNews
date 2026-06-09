@@ -3,12 +3,15 @@
 
 mode:
   source: api                  # LIVE: reading your real home timeline
-  publisher: api               # LIVE: posts go to X — but ONLY on manual approve (autonomous=false)
-  autonomous: false            # false = YOU approve each post before it goes out
+  publisher: api               # LIVE: posts go to X
+  autonomous: true             # AUTONOMOUS: the publish workflow posts without manual review
 
 scoping:
   source_timeline: home        # full home timeline — following already curated, no List
-  max_posts_per_day: 50        # HARD read cap → pins X API read cost (~$0.005/post). Test value.
+  # Read ceiling PER COLLECT RUN (4 runs/day). since_id dedup means a run only
+  # pays for posts newer than the last one stored, so typical spend per run is
+  # "new posts since 6h ago", not the ceiling. ~$0.005/post returned.
+  max_posts_per_day: 50
   languages: [en]
 
 ranking:
@@ -69,10 +72,19 @@ topics:
     - acquisition
 
 posting:
-  per_day: 3
-  windows: ["08:30-10:00", "12:30-14:00", "18:00-20:00"]
+  per_day: 3                   # hard daily cap (publish_due re-checks posted_log)
+  per_run: 1                   # each scheduled window posts at most one draft
+  # Draft queue = small standby buffer, NOT a backlog: collect tops it up to
+  # per_day+1 pending drafts (one spare in case a publish fails), and anything
+  # older than draft_max_age_hours expires so commentary never goes stale.
+  draft_max_age_hours: 48
+  # Research-backed windows (Buffer 8.7M-post study, Sprout Social, 2026): weekday
+  # late-morning→afternoon in the audience's local time wins; audience spans ET→PT.
+  # The publish workflow's cron fires at each window start + sleeps 0-90 random
+  # minutes, so the actual post time differs every day.
+  windows: ["08:00-09:30", "12:00-13:30", "16:30-18:00"]
   timezone: "America/Los_Angeles"
-  jitter_minutes: 25
+  jitter_minutes: 90           # documented here; enforced in .github/workflows/publish.yml
   min_gap_minutes: 90
   author_cooldown_days: 5
   # Cross-account quote_tweet_id is broken (X, ~Feb 2026). Instead, post standalone

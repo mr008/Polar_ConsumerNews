@@ -153,6 +153,14 @@ class SqliteRepository:
         ).fetchall()
         return [self._row_to_post(r) for r in rows]
 
+    def max_seen_tweet_id(self) -> Optional[str]:
+        """Newest tweet id we've already stored (snowflake ids sort numerically).
+        Used as `since_id` so collect never re-buys posts it already read."""
+        r = self.conn.execute(
+            "SELECT tweet_id FROM posts ORDER BY CAST(tweet_id AS INTEGER) DESC LIMIT 1"
+        ).fetchone()
+        return r["tweet_id"] if r else None
+
     def metrics_history(self, tweet_id: str) -> list[Metrics]:
         rows = self.conn.execute(
             "SELECT * FROM post_metrics WHERE tweet_id=? ORDER BY captured_at ASC", (tweet_id,)
@@ -223,6 +231,24 @@ class SqliteRepository:
             safety_passed=bool(r["safety_passed"]), safety_notes=r["safety_notes"] or "",
             created_at=parse_dt(r["created_at"]),
         )
+
+    def expire_stale_drafts(self, max_age_hours: float) -> int:
+        """Mark pending drafts older than max_age_hours as 'stale' — their moment
+        has passed and the queue should refill with fresh material. (COUNT-then-
+        UPDATE because the Turso cursor shim has no rowcount.)"""
+        cutoff = (utcnow() - timedelta(hours=max_age_hours)).isoformat()
+        n = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM drafts WHERE status='pending' AND created_at < ?",
+            (cutoff,),
+        ).fetchone()["c"]
+        if n:
+            self.conn.execute(
+                "UPDATE drafts SET status='stale', note='expired' "
+                "WHERE status='pending' AND created_at < ?",
+                (cutoff,),
+            )
+            self.conn.commit()
+        return n
 
     def pending_drafts(self) -> list[tuple[int, Draft, Post]]:
         rows = self.conn.execute(

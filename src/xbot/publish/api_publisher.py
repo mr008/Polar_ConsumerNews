@@ -33,7 +33,17 @@ class ApiPublisher:
         # commentary + source URL standalone (URL counts toward the $0.20 write tier).
         if link_mode:
             resp = session.post(f"{API_BASE}/tweets", json={"text": text}, timeout=30)
-            resp.raise_for_status()
+            if resp.status_code not in (200, 201):
+                body = resp.text[:200]
+                # X often treats a tweet-URL in text as a quote → same cross-account
+                # block as quote_tweet_id. Fall back to pure commentary (no link).
+                resp = session.post(f"{API_BASE}/tweets",
+                                    json={"text": draft.commentary}, timeout=30)
+                if resp.status_code in (200, 201):
+                    print(f"  [publish] link rejected ({body}); posted WITHOUT the link")
+                    return {"ok": True, "id": resp.json().get("data", {}).get("id", ""),
+                            "mode": "link_stripped"}
+                raise RuntimeError(f"link post failed: {body}\nbare post failed: {resp.text[:200]}")
             return {"ok": True, "id": resp.json().get("data", {}).get("id", ""), "mode": "link"}
 
         if "http://" in draft.commentary or "https://" in draft.commentary:
@@ -51,8 +61,10 @@ class ApiPublisher:
                                 json={"text": draft.commentary}, timeout=30)
             quoted = False
 
+        # RuntimeError (not SystemExit) so the orchestrator can skip to the
+        # next-best draft instead of the whole run dying.
         if resp.status_code == 403:
-            raise SystemExit(
+            raise RuntimeError(
                 "403 from POST /2/tweets — the app behind your Access Token is likely "
                 "Read-only. Set THAT app to 'Read and Write', regenerate the Access "
                 "Token + Secret, update .env, and retry.\n" + resp.text[:300]

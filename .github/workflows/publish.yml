@@ -1,18 +1,30 @@
 name: publish
 
-# Posts due drafts 3x/day. Only posts when mode.autonomous=true; otherwise it
-# reports what's awaiting manual review. Times are jittered windows, UTC.
+# Posts ONE due draft per run, 3 runs/day. Each cron fires at the START of a
+# research-backed engagement window (Buffer/Sprout 2026 data: weekday late
+# morning -> afternoon, audience spans ET->PT), then sleeps a random 0-90 min so
+# the actual post time is different every day. GitHub adds its own 5-15 min cron
+# delay on top. Failures inside a run skip to the next-best draft (orchestrator).
+#
+# Crons are UTC. PT windows below assume PDT (UTC-7); in winter (PST) everything
+# lands one hour earlier in local time — fine, the windows are jittered anyway.
 on:
   schedule:
-    - cron: "31 16 * * *"    # ~morning PT
-    - cron: "47 20 * * *"    # ~midday PT
-    - cron: "13 2 * * *"     # ~evening PT
+    - cron: "0 15 * * *"     # window 1: 08:00-09:30 PT (11:00-12:30 ET)
+    - cron: "0 19 * * *"     # window 2: 12:00-13:30 PT (15:00-16:30 ET)
+    - cron: "30 23 * * *"    # window 3: 16:30-18:00 PT (19:30-21:00 ET)
   workflow_dispatch: {}
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
+      - name: random jitter (0-90 min, scheduled runs only)
+        if: github.event_name == 'schedule'
+        run: |
+          DELAY=$(( RANDOM * 5400 / 32768 ))
+          echo "sleeping ${DELAY}s ($(( DELAY / 60 )) min) before posting"
+          sleep "$DELAY"
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
