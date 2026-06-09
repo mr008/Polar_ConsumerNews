@@ -133,6 +133,25 @@ def test_unsafe_draft_never_posts(tmp_path):
     assert pub.published == []
 
 
+def test_posted_times_stored_and_reported_in_pt(tmp_path):
+    repo = _repo()
+    repo.tz_name = "America/Los_Angeles"
+    _queue(repo, "1", quote_score=0.9)
+    orch = _orch(tmp_path, repo, _FakePublisher())
+    orch.publish_due()
+
+    # stored: posted_at stays UTC (date math), posted_at_pt is the PT instant
+    row = repo.conn.execute(
+        "SELECT posted_at, posted_at_pt FROM posted_log").fetchone()
+    assert row["posted_at"].endswith("+00:00")
+    assert row["posted_at_pt"].endswith(("-07:00", "-08:00"))  # PDT / PST
+
+    # reported: activity log shows PT with the right label
+    entry = orch.report()["activity"]["posted"][0]
+    assert entry["tz"] in ("PDT", "PST")
+    assert entry["posted_at"].endswith(("-07:00", "-08:00"))
+
+
 def test_report_activity_log(tmp_path):
     repo = _repo()
     _queue(repo, "1", quote_score=0.9)

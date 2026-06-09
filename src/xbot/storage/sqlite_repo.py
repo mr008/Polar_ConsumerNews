@@ -3,11 +3,11 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import timedelta
+from datetime import timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
-from ..models import Draft, Metrics, Post, Score, parse_dt, utcnow
+from ..models import Draft, Metrics, Post, Score, parse_dt, to_local, utcnow
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS posts (
@@ -69,7 +69,8 @@ CREATE TABLE IF NOT EXISTS posted_log (
     author_handle TEXT,
     source_text TEXT,
     commentary TEXT,
-    posted_at TEXT
+    posted_at TEXT,
+    posted_at_pt TEXT
 );
 
 CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT);
@@ -82,6 +83,11 @@ CREATE INDEX IF NOT EXISTS idx_candidates_status ON candidates(status);
 
 
 class SqliteRepository:
+    # Local posting timezone (config posting.timezone); set by get_repository().
+    # Drives the stored posted_at_pt column, the daily-cap day boundary, and
+    # report display. Internal date math stays UTC.
+    tz_name = "UTC"
+
     def __init__(self, path: str = "data/state.db"):
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(path, check_same_thread=False)
@@ -90,6 +96,11 @@ class SqliteRepository:
 
     def init_schema(self) -> None:
         self.conn.executescript(SCHEMA)
+        # Migration (2026-06): posted_at_pt on pre-existing DBs. Errors = exists.
+        try:
+            self.conn.execute("ALTER TABLE posted_log ADD COLUMN posted_at_pt TEXT")
+        except Exception:
+            pass
         self.conn.commit()
 
     # ---------- posts + metrics ----------
@@ -294,12 +305,13 @@ class SqliteRepository:
 
     def log_posted(self, source_tweet_id, our_tweet_id, author_handle,
                    source_text, commentary) -> None:
+        now = utcnow()
         self.conn.execute(
             """INSERT INTO posted_log (source_tweet_id, our_tweet_id, author_handle,
-                   source_text, commentary, posted_at)
-               VALUES (?,?,?,?,?,?)""",
+                   source_text, commentary, posted_at, posted_at_pt)
+               VALUES (?,?,?,?,?,?,?)""",
             (source_tweet_id, our_tweet_id, author_handle, source_text, commentary,
-             utcnow().isoformat()),
+             now.isoformat(), to_local(now, self.tz_name).isoformat()),
         )
         self.conn.commit()
 
@@ -311,12 +323,18 @@ class SqliteRepository:
             "WHERE posted_at >= ? ORDER BY posted_at DESC",
             (cutoff,),
         ).fetchall()
-        return [{
-            "posted_at": r["posted_at"],
-            "author": r["author_handle"],
-            "url": f"https://x.com/i/status/{r['our_tweet_id']}" if r["our_tweet_id"] else "",
-            "commentary": ((r["commentary"] or "").splitlines() or [""])[0][:100],
-        } for r in rows]
+        out = []
+        for r in rows:
+            # Convert on read (covers rows written before posted_at_pt existed).
+            local = to_local(r["posted_at"], self.tz_name)
+            out.append({
+                "posted_at": local.isoformat(),
+                "tz": local.tzname() or "UTC",
+                "author": r["author_handle"],
+                "url": f"https://x.com/i/status/{r['our_tweet_id']}" if r["our_tweet_id"] else "",
+                "commentary": ((r["commentary"] or "").splitlines() or [""])[0][:100],
+            })
+        return out
 
     def activity_drafts(self, statuses: list[str], within_hours: float = 72) -> list[dict]:
         """Drafts that went wrong (failed/blocked/stale), newest first. The time
@@ -337,7 +355,11 @@ class SqliteRepository:
         } for r in rows]
 
     def count_posted_today(self) -> int:
-        start = utcnow().replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        """'Today' = the local posting day (posting.timezone), so the 3/day cap
+        aligns with the PT posting windows instead of UTC midnight (~4-5pm PT)."""
+        start_local = to_local(utcnow(), self.tz_name).replace(
+            hour=0, minute=0, second=0, microsecond=0)
+        start = start_local.astimezone(timezone.utc).isoformat()
         r = self.conn.execute(
             "SELECT COUNT(*) AS c FROM posted_log WHERE posted_at >= ?", (start,)
         ).fetchone()

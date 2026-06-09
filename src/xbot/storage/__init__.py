@@ -11,9 +11,14 @@ def get_repository(cfg) -> Repository:
     """Turso when TURSO_DATABASE_URL is set (cloud + shared state), else local SQLite."""
     if os.environ.get("TURSO_DATABASE_URL"):
         from .turso_repo import TursoRepository
-        return TursoRepository()
-    from ..config import db_path
-    return SqliteRepository(db_path(cfg))
+        repo = TursoRepository()
+    else:
+        from ..config import db_path
+        repo = SqliteRepository(db_path(cfg))
+    # Local posting timezone — drives posted_at_pt, the daily-cap boundary,
+    # and report display (PT for this bot).
+    repo.tz_name = cfg.get("posting.timezone", "UTC")
+    return repo
 
 
 __all__ = ["Repository", "SqliteRepository", "get_repository"]

@@ -157,7 +157,7 @@ def cmd_report(args):
     print(f"\nActivity log (last 72h) — {len(posted)} posted, {len(problems)} problem(s)")
     for e in posted:
         when = e["posted_at"][:16].replace("T", " ")
-        print(f"  ✓ {when} UTC  h/t @{e['author']}  {e['url']}")
+        print(f"  ✓ {when} {e.get('tz', 'UTC')}  h/t @{e['author']}  {e['url']}")
         print(f"      {e['commentary']}")
     for e in problems:
         print(f"  ✗ [{e['status']}] draft #{e['draft_id']} (@{e['author']})  {e['note']}")

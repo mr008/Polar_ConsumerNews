@@ -9,6 +9,7 @@ description = "X/Twitter quote-tweet curator bot — finds viral consumer-app co
 requires-python = ">=3.11"
 dependencies = [
     "pyyaml>=6",
+    "tzdata>=2024.1",  # zoneinfo database for Windows (no-op on Linux/macOS)
 ]
 
 [project.optional-dependencies]

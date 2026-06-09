@@ -25,6 +25,20 @@ def parse_dt(value) -> datetime:
     return dt.astimezone(timezone.utc)
 
 
+def to_local(value, tz_name: str) -> datetime:
+    """UTC timestamp -> tz-aware local time (e.g. PT). Internal date math stays
+    UTC; this converts at the storage/display edge. Falls back to UTC if the
+    timezone database is unavailable rather than crashing."""
+    dt = parse_dt(value)
+    if not tz_name or tz_name == "UTC":
+        return dt
+    try:
+        from zoneinfo import ZoneInfo
+        return dt.astimezone(ZoneInfo(tz_name))
+    except Exception:
+        return dt
+
+
 @dataclass
 class Metrics:
     likes: int = 0
