@@ -152,24 +152,28 @@ def test_posted_times_stored_and_reported_in_pt(tmp_path):
     assert entry["posted_at"].endswith(("-07:00", "-08:00"))
 
 
-def test_run_log_records_publish_counts(tmp_path):
+def test_run_log_aggregates_daily_counts(tmp_path):
     repo = _repo()
     _queue(repo, "1", quote_score=0.9)
     _queue(repo, "2", quote_score=0.5)
     pub = _FakePublisher(fail_ids={"1"})
     orch = _orch(tmp_path, repo, pub)
-    orch.publish_due()
-    repo.log_run("collect", read=81)
+    orch.publish_due()                       # posts 1 (after one failure)
+    repo.log_run("collect", read=50)
+    repo.log_run("collect", read=31)         # second collect, same day
     repo.log_run("draft", judged=15, drafted=2)
 
-    runs = orch.report()["activity"]["runs"]
-    assert [r["kind"] for r in runs] == ["publish", "collect", "draft"]
-    publish_row = runs[0]
-    assert publish_row["posted"] == 1
-    assert "posted" in publish_row["detail"]
-    assert "403 simulated" in publish_row["detail"]   # failure recorded
-    assert runs[1]["read"] == 81
-    assert runs[2]["judged"] == 15 and runs[2]["drafted"] == 2
+    # raw per-run rows record the failure detail
+    publish_runs = [r for r in repo.recent_runs(72) if r["kind"] == "publish"]
+    assert "403 simulated" in publish_runs[0]["detail"]
+
+    # the report aggregates per day: 50+31 reads, 15 judged, 2 drafted, 1 posted
+    days = orch.report()["activity"]["days"]
+    assert len(days) == 1
+    assert days[0]["read"] == 81
+    assert days[0]["judged"] == 15
+    assert days[0]["drafted"] == 2
+    assert days[0]["posted"] == 1
 
 
 def test_report_activity_log(tmp_path):

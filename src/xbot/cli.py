@@ -164,23 +164,20 @@ def cmd_report(args):
     if not posted and not problems:
         print("  (nothing posted, no failures)")
 
-    runs = activity.get("runs", [])
-    if runs:
-        print("\nRun log (last 72h)")
+    days = activity.get("days", [])
+    if days:
+        print("\nRun log — daily (PT days, last 7)")
         totals = {"read": 0, "judged": 0, "drafted": 0, "posted": 0}
-        for e in runs:
-            when = e["ts"][5:16].replace("T", " ")  # MM-DD HH:MM
-            parts = [f"{k}={e[k]}" for k in totals if e[k]]
-            if e["kind"] == "publish" and e["detail"]:
-                parts.append(e["detail"])
-            print(f"  {when} {e['tz']}  {e['kind']:<8} {' '.join(parts)}")
-            for k in totals:
-                totals[k] += e[k]
         # Display-only spend estimate: reads ~$0.005/post, writes ~$0.20 (link mode).
-        est = totals["read"] * 0.005 + totals["posted"] * 0.20
-        print(f"  totals: read {totals['read']} · judged {totals['judged']} · "
-              f"drafted {totals['drafted']} · posted {totals['posted']}"
-              f"  (≈${est:.2f} X API spend)")
+        for d in days:
+            spend = d["read"] * 0.005 + d["posted"] * 0.20
+            print(f"  {d['day']}  read {d['read']:>3} · judged {d['judged']:>3} · "
+                  f"drafted {d['drafted']:>2} · posted {d['posted']}   ≈${spend:.2f}")
+            for k in totals:
+                totals[k] += d[k]
+        total_spend = totals["read"] * 0.005 + totals["posted"] * 0.20
+        print(f"  {'total':<10}  read {totals['read']:>3} · judged {totals['judged']:>3} · "
+              f"drafted {totals['drafted']:>2} · posted {totals['posted']}   ≈${total_spend:.2f}")
 
 
 def main(argv=None):

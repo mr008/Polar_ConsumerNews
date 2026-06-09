@@ -355,6 +355,20 @@ class SqliteRepository:
                         "detail": r["detail"] or ""})
         return out
 
+    def daily_run_totals(self, days: int = 7) -> list[dict]:
+        """Per-PT-day totals of the run counters (read/judged/drafted/posted)."""
+        cutoff = (utcnow() - timedelta(days=days)).isoformat()
+        rows = self.conn.execute(
+            "SELECT substr(ts_pt, 1, 10) AS day, SUM(n_read) AS n_read, "
+            "SUM(n_judged) AS n_judged, SUM(n_drafted) AS n_drafted, "
+            "SUM(n_posted) AS n_posted FROM run_log WHERE ts >= ? "
+            "GROUP BY day ORDER BY day ASC",
+            (cutoff,),
+        ).fetchall()
+        return [{"day": r["day"], "read": r["n_read"] or 0, "judged": r["n_judged"] or 0,
+                 "drafted": r["n_drafted"] or 0, "posted": r["n_posted"] or 0}
+                for r in rows]
+
     # ---------- activity log (surfaced by `xbot report`) ----------
     def activity_posted(self, within_hours: float = 72) -> list[dict]:
         cutoff = (utcnow() - timedelta(hours=within_hours)).isoformat()

@@ -191,6 +191,6 @@ class Orchestrator:
             "activity": {
                 "posted": self.repo.activity_posted(72),
                 "problems": self.repo.activity_drafts(["failed", "blocked", "stale"], 72),
-                "runs": self.repo.recent_runs(72),
+                "days": self.repo.daily_run_totals(7),
             },
         }
