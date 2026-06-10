@@ -71,8 +71,13 @@ def check_commentary(post: Post, commentary: str, cfg: NS) -> tuple[bool, str]:
         if d not in src_digits:
             return False, f"fabricated_number:{d}"
 
-    # X allows 280 chars; max_commentary_chars is the prompt TARGET, not a hard block.
-    if len(commentary) > 280:
-        return False, f"too_long:{len(commentary)}"
+    # Length: measure what will ACTUALLY be posted. In link mode the attribution
+    # line ("h/t @handle: <url>") eats ~45 chars of the 280, so a 270-char
+    # commentary would be silently truncated mid-sentence at post time.
+    from ..publish.publisher import body_budget, strip_ht_tail  # lazy: avoid import cycle
+    budget = body_budget(post, cfg)
+    body = strip_ht_tail(commentary)
+    if len(body) > budget:
+        return False, f"too_long:{len(body)}>{budget}"
 
     return True, "ok"

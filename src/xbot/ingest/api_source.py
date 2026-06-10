@@ -63,6 +63,31 @@ class ApiSourceAdapter:
                 break
         return posts[:limit]
 
+    def fetch_metrics(self, ids: list[str]) -> dict[str, Metrics]:
+        """Re-poll public metrics for known tweets so ranking sees live engagement
+        (since_id means timeline reads never refresh them). PAID: ~$0.005/post —
+        callers keep the id list small (queue + top candidates)."""
+        if not ids:
+            return {}
+        from requests_oauthlib import OAuth1Session  # lazy import
+
+        session = OAuth1Session(self.ck, self.cs, self.at, self.ats)
+        resp = session.get(f"{API_BASE}/tweets",
+                           params={"ids": ",".join(ids[:100]),
+                                   "tweet.fields": "public_metrics"},
+                           timeout=30)
+        resp.raise_for_status()
+        now = utcnow()
+        out: dict[str, Metrics] = {}
+        for t in resp.json().get("data", []):
+            pm = t.get("public_metrics", {})
+            out[t["id"]] = Metrics(
+                likes=pm.get("like_count", 0), reposts=pm.get("retweet_count", 0),
+                replies=pm.get("reply_count", 0), quotes=pm.get("quote_count", 0),
+                views=pm.get("impression_count", 0), captured_at=now,
+            )
+        return out
+
     @staticmethod
     def _to_post(t: dict, users: dict) -> Post:
         author = users.get(t.get("author_id"), {})

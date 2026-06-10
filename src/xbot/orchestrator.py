@@ -10,6 +10,7 @@ import os
 
 from .commentary import check_commentary, get_generator
 from .config import NS, kill_switch_active
+from .dedup import author_in_cooldown, is_near_duplicate
 from .ingest import SampleSource
 from .models import Draft, Post, Score
 from .publish import get_publisher
@@ -43,6 +44,16 @@ class Orchestrator:
 
     # ---------- collector flow ----------
     def collect(self) -> int:
+        # Circuit breaker: hard monthly read budget. Protects against API
+        # weirdness (e.g. since_id ignored) silently running up the bill.
+        budget = self.cfg.get("scoping.monthly_read_budget", 0)
+        if budget:
+            used = self.repo.reads_this_month()
+            if used >= budget:
+                msg = f"circuit_breaker: {used}/{budget} reads this month — collect skipped"
+                print(f"  [collect] {msg}")
+                self.repo.log_run("collect", read=0, detail=msg)
+                return 0
         cap = self.cfg.get("scoping.max_posts_per_day", 120)
         # since_id = read-dedup: only fetch (and pay for) posts newer than the
         # newest one already in the DB.
@@ -56,19 +67,73 @@ class Orchestrator:
 
     def score(self) -> tuple[list[Post], list[Score]]:
         posts = self.repo.recent_posts(72)
-        judge_posts = prefilter_for_judge(posts, self.cfg)
-        self.judged_count = len(judge_posts)  # posts sent to the LLM judge
-        judged = self.judge.score_batch(judge_posts)            # semantic topic + teaching
-        self.judge_reasons = {tid: reason for tid, (_, _, reason) in judged.items()}
-        teaching = {tid: score for tid, (score, _, _) in judged.items()}
-        topic = {tid: (1.0 if on_topic else 0.0) for tid, (_, on_topic, _) in judged.items()}
+        self._refresh_reads = self._refresh_metrics(posts)
+
+        # JUDGE-ONCE: teaching value doesn't change after publication, so a post
+        # is judged exactly one time. Stored verdicts (judged=True) are reused;
+        # only never-judged posts go to the LLM. This also fixes the clobbering
+        # bug where re-scoring overwrote judge values with 0 for any post that
+        # fell out of the batch (catastrophically: ALL posts on a judge outage).
+        teaching: dict[str, float] = {}
+        topic: dict[str, float] = {}
+        judged_ids: set[str] = set()
+        unjudged: list[Post] = []
+        for p in posts:
+            s = self.repo.get_score(p.tweet_id)
+            if s is not None and s.judged:
+                teaching[p.tweet_id] = s.quote_worthy
+                topic[p.tweet_id] = s.topic_fit
+                judged_ids.add(p.tweet_id)
+            else:
+                unjudged.append(p)
+
+        judge_posts = prefilter_for_judge(unjudged, self.cfg)
+        self.judged_count = len(judge_posts)  # posts sent to the LLM judge this run
+        verdicts = self.judge.score_batch(judge_posts)  # {} on judge outage — no clobber
+        self.judge_reasons = {tid: reason for tid, (_, _, reason) in verdicts.items()}
+        for tid, (tscore, on_topic, reason) in verdicts.items():
+            teaching[tid] = tscore
+            topic[tid] = 1.0 if on_topic else 0.0
+            if reason != "not judged":  # judge actually returned a verdict
+                judged_ids.add(tid)
+
         scores = score_posts(posts, self.cfg, self.repo,
                              teaching_scores=teaching, topic_scores=topic)
         for s in scores:
+            s.judged = s.tweet_id in judged_ids
             self.repo.save_score(s)
             if not self.repo.has_posted(s.tweet_id):
                 self.repo.set_candidate(s.tweet_id, "scored")
         return posts, scores
+
+    def _refresh_metrics(self, posts: list[Post]) -> int:
+        """Re-poll live engagement for the queue + top-scored candidates (paid,
+        small, optional). since_id collection never refreshes metrics, so without
+        this the engagement leg of ranking is frozen at first sight."""
+        top_n = self.cfg.get("scoping.metrics_refresh_top", 0)
+        fetch = getattr(getattr(self, "source", None), "fetch_metrics", None)
+        if not top_n or fetch is None:
+            return 0
+        ids = [p.tweet_id for _, _, p in self.repo.pending_drafts()]
+        def stored_score(p: Post) -> float:
+            s = self.repo.get_score(p.tweet_id)
+            return s.quote_score if s else 0.0
+        for p in sorted(posts, key=stored_score, reverse=True):
+            if len(ids) >= top_n:
+                break
+            if p.tweet_id not in ids:
+                ids.append(p.tweet_id)
+        try:
+            fresh = fetch(ids[:top_n])
+        except Exception as e:
+            print(f"  [metrics] refresh failed ({type(e).__name__}) — using stored metrics")
+            return 0
+        by_id = {p.tweet_id: p for p in posts}
+        for tid, m in fresh.items():
+            self.repo.add_metrics(tid, m)       # history row → real velocity slope
+            if tid in by_id:
+                by_id[tid].metrics = m          # this run scores live numbers too
+        return len(fresh)
 
     def make_drafts(self, limit: int | None = None) -> list[dict]:
         posts, scores = self.score()
@@ -82,18 +147,22 @@ class Orchestrator:
         # per_day+1: enough that every window has one fallback if the best post
         # fails, without paying for commentary that will never be used.
         self.repo.expire_stale_drafts(self.cfg.get("posting.draft_max_age_hours", 48))
-        pending_ids = {tid for tid, _, _ in self.repo.pending_drafts()}
+        # One Sonnet attempt per post EVER — a blocked draft must not be
+        # re-rolled every collect run.
+        drafted_ids = self.repo.drafted_tweet_ids()
         if limit is None:
             queue_target = self.cfg.get("posting.per_day", 3) + 1
-            limit = max(0, queue_target - len(pending_ids))
+            limit = max(0, queue_target - len(self.repo.pending_drafts()))
+            if limit == 0:
+                limit = self._maybe_supersede(eligible, drafted_ids)
         created: list[dict] = []
+        n_ok = 0  # blocked drafts don't consume the top-up budget
         for score, post in eligible:
-            if len(created) >= limit:
+            if n_ok >= limit:
                 break
-            if post.tweet_id in pending_ids or self.repo.has_posted(post.tweet_id):
+            if post.tweet_id in drafted_ids or self.repo.has_posted(post.tweet_id):
                 continue
-            draft = self.generator.generate(post)
-            ok, notes = check_commentary(post, draft.commentary, self.cfg)
+            draft, ok, notes = self._vet_commentary(post, self.generator.generate(post))
             draft.safety_passed = ok
             draft.safety_notes = notes
             draft_id = self.repo.add_draft(draft, status="pending" if ok else "blocked")
@@ -101,9 +170,69 @@ class Orchestrator:
                                     "" if ok else notes)
             created.append({"draft_id": draft_id, "draft": draft, "post": post,
                             "score": score, "ok": ok, "notes": notes})
-        self.repo.log_run("draft", judged=getattr(self, "judged_count", 0),
+            if ok:
+                n_ok += 1
+        self.repo.log_run("draft", read=getattr(self, "_refresh_reads", 0),
+                          judged=getattr(self, "judged_count", 0),
                           drafted=len(created))
         return created
+
+    def _vet_commentary(self, post: Post, draft: Draft) -> tuple[Draft, bool, str]:
+        """Deterministic safety gates + LLM QA gate, with ONE revision attempt.
+        Too-long / fabricated-number / QA-rejected drafts get a single editor-
+        feedback rewrite instead of being thrown away."""
+        from .commentary.qa import qa_commentary
+        notes = ""
+        for attempt in (1, 2):
+            ok, notes = check_commentary(post, draft.commentary, self.cfg)
+            if ok:
+                qa_ok, qa_issue = qa_commentary(post, draft.commentary, self.cfg)
+                if qa_ok:
+                    return draft, True, "ok"
+                notes = qa_issue
+            if attempt == 2:
+                break
+            revise = getattr(self.generator, "revise", None)
+            if revise is None:  # offline template generator can't rewrite
+                break
+            draft = revise(post, draft.commentary, self._revision_feedback(post, notes))
+        return draft, False, notes
+
+    def _revision_feedback(self, post: Post, notes: str) -> str:
+        if notes.startswith("too_long"):
+            from .publish.publisher import body_budget
+            return (f"It is too long ({notes}). Rewrite to UNDER "
+                    f"{body_budget(post, self.cfg)} characters: tighter hook, "
+                    f"max 2 bullets, one-line takeaway.")
+        if notes.startswith("fabricated_number"):
+            return ("You used a number that is not in the source post. Remove it; "
+                    "use only numbers that literally appear in the source.")
+        if notes.startswith("qa:"):
+            return (f"It failed editorial review: {notes[3:]}. Write a proper "
+                    "teaching breakdown of the tactic in the source — never address "
+                    "the author or reader, never ask for more content.")
+        return f"It was rejected ({notes}). Fix that while keeping every other rule."
+
+    def _maybe_supersede(self, eligible, drafted_ids) -> int:
+        """Queue is full — but if today's best new candidate clearly outranks the
+        weakest pending draft, retire the weak one and free a slot (freshness)."""
+        margin = self.cfg.get("posting.supersede_margin", 0.15)
+        pending = self._ranked_pending()
+        if not pending:
+            return 0
+        weakest_id, _, weakest_post = pending[-1]
+        ws = self.repo.get_score(weakest_post.tweet_id)
+        weakest = ws.quote_score if ws else 0.0
+        for s, p in eligible:  # sorted best-first; only the top one can supersede
+            if p.tweet_id in drafted_ids or self.repo.has_posted(p.tweet_id):
+                continue
+            if s.quote_score >= weakest + margin:
+                self.repo.set_draft_status(
+                    weakest_id, "superseded",
+                    f"outranked by {p.tweet_id} ({s.quote_score:.2f} vs {weakest:.2f})")
+                return 1
+            break
+        return 0
 
     # ---------- publisher flow ----------
     def publish_due(self) -> dict:
@@ -127,6 +256,8 @@ class Orchestrator:
         # hard cap so a manual re-run can't overshoot.
         self.repo.expire_stale_drafts(self.cfg.get("posting.draft_max_age_hours", 48))
         budget = min(remaining, self.cfg.get("posting.per_run", 1))
+        cooldown_days = self.cfg.get("posting.author_cooldown_days", 5)
+        near_dup = self.cfg.get("thresholds.near_dup_similarity", 0.82)
         results, failures = [], []
         for draft_id, draft, post in self._ranked_pending():
             if len(results) >= budget:
@@ -135,6 +266,15 @@ class Orchestrator:
                 continue
             if self.repo.has_posted(post.tweet_id) or self.repo.has_posted(post.canonical_id):
                 self.repo.set_draft_status(draft_id, "duplicate")
+                continue
+            # Re-check at POST time what drafting checked at DRAFT time — the
+            # queue can hold two drafts by one author, or the same echoed idea
+            # from two authors, and an earlier window may have posted its twin.
+            if author_in_cooldown(post.author_handle, self.repo, cooldown_days):
+                self.repo.set_draft_status(draft_id, "skipped", "author_cooldown_at_publish")
+                continue
+            if is_near_duplicate(post.text, self.repo.posted_source_texts(), near_dup):
+                self.repo.set_draft_status(draft_id, "skipped", "near_duplicate_at_publish")
                 continue
             try:
                 results.append(self._publish(draft_id, draft, post))

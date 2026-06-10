@@ -12,6 +12,13 @@ scoping:
   # pays for posts newer than the last one stored, so typical spend per run is
   # "new posts since 6h ago", not the ceiling. ~$0.005/post returned.
   max_posts_per_day: 50
+  # CIRCUIT BREAKER: hard cap on paid reads per calendar month (~$20 at 4000).
+  # collect refuses to run beyond it and logs why. 0 = disabled.
+  monthly_read_budget: 4000
+  # Re-poll live engagement for the queue + top candidates each scoring pass
+  # (PAID: ~$0.005 each — ~$6/mo at 10). Keeps the engagement leg of ranking
+  # live; since_id collection never refreshes metrics on its own. 0 = off.
+  metrics_refresh_top: 10
   languages: [en]
 
 ranking:
@@ -20,6 +27,10 @@ ranking:
   teaching_weight: 0.65
   use_llm_judge: true          # the LLM READS each post and scores real teaching value
   judge_model: "claude-haiku-4-5-20251001"   # Haiku — cheap, high-volume classification
+  # QA GATE: a Haiku editor pass on every draft — rejects meta-commentary
+  # ("drop the full thread..."), no-lesson drafts, broken format. One revision
+  # attempt before a draft is blocked. Fail-open if the LLM is unavailable.
+  qa_gate: true
   judge_examples:              # the owner's own calls — few-shot the judge to YOUR taste
     - text: "save this for when you overthink your marketing — millions of views from reusing the same AI image. the opportunity is right there."
       verdict: good
@@ -87,6 +98,9 @@ posting:
   jitter_minutes: 90           # documented here; enforced in .github/workflows/publish.yml
   min_gap_minutes: 90
   author_cooldown_days: 5
+  # When the queue is full but a new candidate beats the weakest pending draft
+  # by this quote_score margin, the weak draft is retired and replaced.
+  supersede_margin: 0.15
   # Cross-account quote_tweet_id is broken (X, ~Feb 2026). Instead, post standalone
   # and append the source URL — X often auto-embeds it as a quote card, and it's a
   # clickable link either way. NOTE: a URL bumps the write to ~$0.20/post (vs $0.015).

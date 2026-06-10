@@ -110,6 +110,9 @@ class Score:
     stage1_score: float = 0.0
     quote_worthy: float = 0.0
     quote_score: float = 0.0
+    # True only when topic_fit/quote_worthy came from a real judge verdict.
+    # Prevents an unjudged re-score from clobbering stored judge values.
+    judged: bool = False
     scored_at: datetime = field(default_factory=utcnow)
 
 

@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS scores (
     tweet_id TEXT PRIMARY KEY,
     stage1_score REAL, velocity_n REAL, eng_per_follower_n REAL, echo_n REAL,
     recency_n REAL, topic_fit REAL, quote_worthy REAL, quote_score REAL,
+    judged INTEGER DEFAULT 0,
     scored_at TEXT
 );
 
@@ -108,11 +109,13 @@ class SqliteRepository:
 
     def init_schema(self) -> None:
         self.conn.executescript(SCHEMA)
-        # Migration (2026-06): posted_at_pt on pre-existing DBs. Errors = exists.
-        try:
-            self.conn.execute("ALTER TABLE posted_log ADD COLUMN posted_at_pt TEXT")
-        except Exception:
-            pass
+        # Migrations (2026-06) for pre-existing DBs. Errors = column exists.
+        for ddl in ("ALTER TABLE posted_log ADD COLUMN posted_at_pt TEXT",
+                    "ALTER TABLE scores ADD COLUMN judged INTEGER DEFAULT 0"):
+            try:
+                self.conn.execute(ddl)
+            except Exception:
+                pass
         self.conn.commit()
 
     # ---------- posts + metrics ----------
@@ -195,16 +198,17 @@ class SqliteRepository:
     def save_score(self, s: Score) -> None:
         self.conn.execute(
             """INSERT INTO scores (tweet_id, stage1_score, velocity_n, eng_per_follower_n,
-                   echo_n, recency_n, topic_fit, quote_worthy, quote_score, scored_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?)
+                   echo_n, recency_n, topic_fit, quote_worthy, quote_score, judged, scored_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(tweet_id) DO UPDATE SET
                    stage1_score=excluded.stage1_score, velocity_n=excluded.velocity_n,
                    eng_per_follower_n=excluded.eng_per_follower_n, echo_n=excluded.echo_n,
                    recency_n=excluded.recency_n, topic_fit=excluded.topic_fit,
                    quote_worthy=excluded.quote_worthy, quote_score=excluded.quote_score,
-                   scored_at=excluded.scored_at""",
+                   judged=excluded.judged, scored_at=excluded.scored_at""",
             (s.tweet_id, s.stage1_score, s.velocity_n, s.eng_per_follower_n, s.echo_n,
-             s.recency_n, s.topic_fit, s.quote_worthy, s.quote_score, s.scored_at.isoformat()),
+             s.recency_n, s.topic_fit, s.quote_worthy, s.quote_score, int(s.judged),
+             s.scored_at.isoformat()),
         )
         self.conn.commit()
 
@@ -212,11 +216,15 @@ class SqliteRepository:
         r = self.conn.execute("SELECT * FROM scores WHERE tweet_id=?", (tweet_id,)).fetchone()
         if not r:
             return None
+        try:
+            judged = bool(r["judged"])
+        except (KeyError, IndexError):
+            judged = False
         return Score(
             tweet_id=r["tweet_id"], stage1_score=r["stage1_score"], velocity_n=r["velocity_n"],
             eng_per_follower_n=r["eng_per_follower_n"], echo_n=r["echo_n"], recency_n=r["recency_n"],
             topic_fit=r["topic_fit"], quote_worthy=r["quote_worthy"], quote_score=r["quote_score"],
-            scored_at=parse_dt(r["scored_at"]),
+            judged=judged, scored_at=parse_dt(r["scored_at"]),
         )
 
     def set_candidate(self, tweet_id: str, status: str, skip_reason: str = "") -> None:
@@ -272,6 +280,12 @@ class SqliteRepository:
             )
             self.conn.commit()
         return n
+
+    def drafted_tweet_ids(self) -> set[str]:
+        """Posts that already have a draft in ANY status — one Sonnet attempt per
+        post, ever (blocked posts must not be re-rolled every collect run)."""
+        rows = self.conn.execute("SELECT DISTINCT tweet_id FROM drafts").fetchall()
+        return {r["tweet_id"] for r in rows}
 
     def pending_drafts(self) -> list[tuple[int, Draft, Post]]:
         rows = self.conn.execute(
@@ -354,6 +368,16 @@ class SqliteRepository:
                         "drafted": r["n_drafted"], "posted": r["n_posted"],
                         "detail": r["detail"] or ""})
         return out
+
+    def reads_this_month(self) -> int:
+        """Paid X reads since the 1st of the current local month (circuit breaker)."""
+        start_local = to_local(utcnow(), self.tz_name).replace(
+            day=1, hour=0, minute=0, second=0, microsecond=0)
+        start = start_local.astimezone(timezone.utc).isoformat()
+        r = self.conn.execute(
+            "SELECT COALESCE(SUM(n_read), 0) AS c FROM run_log WHERE ts >= ?", (start,)
+        ).fetchone()
+        return r["c"]
 
     def daily_run_totals(self, days: int = 7) -> list[dict]:
         """Per-PT-day totals of the run counters (read/judged/drafted/posted)."""

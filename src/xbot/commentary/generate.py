@@ -152,6 +152,24 @@ class OpenAICompatGenerator:
         self.system = build_system_prompt(cfg)
 
     def generate(self, post: Post) -> Draft:
+        return self._call(post, messages=[
+            {"role": "system", "content": self.system},
+            {"role": "user", "content": _user_prompt(post)},
+        ])
+
+    def revise(self, post: Post, previous: str, feedback: str) -> Draft:
+        """One editor-feedback rewrite (used by the QA gate / length check)."""
+        return self._call(post, messages=[
+            {"role": "system", "content": self.system},
+            {"role": "user", "content": _user_prompt(post)},
+            {"role": "assistant", "content": previous},
+            {"role": "user", "content": (
+                f"Editor rejected that draft: {feedback}\n"
+                "Rewrite it fixing ONLY that problem. Keep every other rule "
+                "(voice, format, h/t tail, no fabrication). Return only the post text.")},
+        ])
+
+    def _call(self, post: Post, messages: list[dict]) -> Draft:
         from openai import OpenAI  # lazy import
         kwargs = {"api_key": os.environ[self.key_env]}
         if self.base_url:
@@ -159,8 +177,7 @@ class OpenAICompatGenerator:
         client = OpenAI(**kwargs)
         resp = client.chat.completions.create(
             model=self.model, temperature=self.temperature, max_tokens=320,
-            messages=[{"role": "system", "content": self.system},
-                      {"role": "user", "content": _user_prompt(post)}],
+            messages=messages,
         )
         return Draft(tweet_id=post.tweet_id,
                      commentary=resp.choices[0].message.content.strip(),

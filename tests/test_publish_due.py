@@ -1,5 +1,6 @@
-"""publish_due: one post per window, best quote_score first, skip-on-failure,
-stale-draft expiry."""
+"""publish_due + make_drafts behaviors: one post per window, best quote_score
+first, skip-on-failure, stale expiry, publish-time re-checks, judge-once /
+no-clobber scoring, supersede, circuit breaker, vet/revision flow."""
 from datetime import timedelta
 
 from xbot.config import NS
@@ -8,12 +9,20 @@ from xbot.orchestrator import Orchestrator
 from xbot.storage.sqlite_repo import SqliteRepository
 
 
-def _cfg(tmp_path, autonomous=True, per_run=1):
-    return NS({
+def _cfg(tmp_path, autonomous=True, per_run=1, extra=None):
+    data = {
         "mode": {"autonomous": autonomous},
         "posting": {"per_day": 3, "per_run": per_run},
         "ops": {"kill_switch_file": str(tmp_path / "STOP")},
-    })
+        "ranking": {"teaching_weight": 0.65, "qa_gate": False},
+        "scoring_weights": {"likes": 0.05, "reposts": 0.15, "velocity": 0.10,
+                            "eng_per_follower": 0.25, "echo": 0.25,
+                            "recency": 0.10, "topic_fit": 0.10},
+        "recency_tau_hours": 8,
+    }
+    if extra:
+        data.update(extra)
+    return NS(data)
 
 
 def _repo():
@@ -22,14 +31,18 @@ def _repo():
     return repo
 
 
-def _post(tid, handle="alice"):
+def _post(tid, handle=None, text=None):
+    handle = handle or f"user{tid}"
+    # distinct tokens per tid so the near-duplicate check doesn't collapse them
+    text = text or f"post {tid} growth tactic alpha{tid} beta{tid} gamma{tid}"
     return Post(tweet_id=tid, author_handle=handle, author_name=handle,
-                text=f"post {tid} about growth tactics", created_at=utcnow(),
+                text=text, created_at=utcnow(),
                 author_follower_count=1000, metrics=Metrics(likes=10))
 
 
-def _queue(repo, tid, quote_score, safety_passed=True, age_hours=0):
-    repo.upsert_post(_post(tid))
+def _queue(repo, tid, quote_score, safety_passed=True, age_hours=0,
+           handle=None, text=None):
+    repo.upsert_post(_post(tid, handle=handle, text=text))
     repo.save_score(Score(tweet_id=tid, quote_score=quote_score))
     repo.add_draft(Draft(tweet_id=tid, commentary=f"take on {tid}", model="test",
                          safety_passed=safety_passed,
@@ -48,13 +61,29 @@ class _FakePublisher:
         return {"ok": True, "id": f"our_{post.tweet_id}"}
 
 
-def _orch(tmp_path, repo, publisher, **cfg_kw):
+class _FakeJudge:
+    """score_batch returns a fixed verdict dict; records what it was asked."""
+    def __init__(self, verdicts=None):
+        self.verdicts = verdicts or {}
+        self.batches = []
+
+    def score_batch(self, posts):
+        self.batches.append([p.tweet_id for p in posts])
+        return {tid: v for tid, v in self.verdicts.items()
+                if tid in {p.tweet_id for p in posts}}
+
+
+def _orch(tmp_path, repo, publisher=None, judge=None, **cfg_kw):
     orch = object.__new__(Orchestrator)  # skip __init__ (builds live adapters)
     orch.cfg = _cfg(tmp_path, **cfg_kw)
     orch.repo = repo
-    orch.publisher = publisher
+    orch.publisher = publisher or _FakePublisher()
+    orch.judge = judge or _FakeJudge()
+    orch.judge_reasons = {}
     return orch
 
+
+# ---------------- publish flow ----------------
 
 def test_posts_one_per_run_best_score_first(tmp_path):
     repo = _repo()
@@ -104,6 +133,15 @@ def test_daily_cap_and_review_gate(tmp_path):
     assert gated["status"] == "review_required"
 
 
+def test_unsafe_draft_never_posts(tmp_path):
+    repo = _repo()
+    _queue(repo, "1", quote_score=0.9, safety_passed=False)
+    pub = _FakePublisher()
+    result = _orch(tmp_path, repo, pub).publish_due()
+    assert result["status"] == "queue_empty"
+    assert pub.published == []
+
+
 def test_stale_draft_expires_instead_of_posting(tmp_path):
     repo = _repo()
     _queue(repo, "1", quote_score=0.9, age_hours=60)   # past 48h shelf life
@@ -124,29 +162,150 @@ def test_expire_stale_drafts_repo_counts(tmp_path):
     assert [p.tweet_id for _, _, p in repo.pending_drafts()] == ["2"]
 
 
-def test_unsafe_draft_never_posts(tmp_path):
-    repo = _repo()
-    _queue(repo, "1", quote_score=0.9, safety_passed=False)
-    pub = _FakePublisher()
-    result = _orch(tmp_path, repo, pub).publish_due()
-    assert result["status"] == "queue_empty"
-    assert pub.published == []
+# ---------------- publish-time re-checks ----------------
 
+def test_same_author_not_posted_twice(tmp_path):
+    repo = _repo()
+    _queue(repo, "1", quote_score=0.9, handle="alice")
+    _queue(repo, "2", quote_score=0.8, handle="alice")   # same author
+    _queue(repo, "3", quote_score=0.5, handle="bob")
+    pub = _FakePublisher()
+    result = _orch(tmp_path, repo, pub, per_run=3).publish_due()
+    # alice's second draft is skipped at publish time; bob's goes out instead
+    assert pub.published == ["1", "3"]
+    assert result["count"] == 2
+    assert [tid for tid, _, _ in repo.pending_drafts()] == []
+
+
+def test_same_idea_not_posted_twice(tmp_path):
+    repo = _repo()
+    same_idea = "reuse one winning AI image across accounts for millions of views"
+    _queue(repo, "1", quote_score=0.9, handle="alice", text=same_idea)
+    _queue(repo, "2", quote_score=0.8, handle="bob", text=same_idea + " period")
+    pub = _FakePublisher()
+    result = _orch(tmp_path, repo, pub, per_run=2).publish_due()
+    assert pub.published == ["1"]          # the echoed twin is skipped
+    assert result["count"] == 1
+
+
+# ---------------- scoring: judge-once + no clobbering ----------------
+
+def test_judge_outage_does_not_clobber_stored_verdicts(tmp_path):
+    repo = _repo()
+    repo.upsert_post(_post("1"))
+    repo.save_score(Score(tweet_id="1", quote_worthy=0.8, topic_fit=1.0,
+                          quote_score=0.7, judged=True))
+    orch = _orch(tmp_path, repo, judge=_FakeJudge({}))   # judge returns nothing
+    orch.score()
+    s = repo.get_score("1")
+    assert s.judged is True
+    assert s.quote_worthy == 0.8          # stored verdict survived the re-score
+    assert s.topic_fit == 1.0
+    assert s.quote_score > 0.3            # not crushed by the topic gate
+
+
+def test_judged_posts_are_not_rejudged(tmp_path):
+    repo = _repo()
+    repo.upsert_post(_post("1"))
+    repo.upsert_post(_post("2"))
+    judge = _FakeJudge({"1": (0.9, True, "solid tactic"),
+                        "2": (0.2, True, "thin")})
+    orch = _orch(tmp_path, repo, judge=judge)
+    orch.score()
+    assert sorted(judge.batches[0]) == ["1", "2"]   # first run judges both
+    assert repo.get_score("1").judged is True
+    orch.score()
+    assert judge.batches[1] == []                    # second run re-judges nothing
+
+
+# ---------------- collect circuit breaker ----------------
+
+def test_monthly_read_budget_circuit_breaker(tmp_path):
+    repo = _repo()
+    repo.log_run("collect", read=50)
+    orch = _orch(tmp_path, repo,
+                 extra={"scoping": {"monthly_read_budget": 40}})
+    assert orch.collect() == 0            # never touches the (absent) source
+    runs = repo.recent_runs(1)
+    assert any("circuit_breaker" in r["detail"] for r in runs)
+
+
+# ---------------- supersede ----------------
+
+def test_supersede_frees_slot_for_clearly_better_candidate(tmp_path):
+    repo = _repo()
+    for tid, qs in (("1", 0.50), ("2", 0.45), ("3", 0.40), ("4", 0.35)):
+        _queue(repo, tid, quote_score=qs)            # queue full (target 4)
+    orch = _orch(tmp_path, repo)
+    new = _post("9")
+    repo.upsert_post(new)
+    eligible = [(Score(tweet_id="9", quote_score=0.9), new)]
+    assert orch._maybe_supersede(eligible, drafted_ids=set()) == 1
+    pending = [p.tweet_id for _, _, p in repo.pending_drafts()]
+    assert "4" not in pending             # weakest retired
+    # a merely-equal candidate does NOT supersede
+    eligible = [(Score(tweet_id="9", quote_score=0.46), new)]
+    assert orch._maybe_supersede(eligible, drafted_ids=set()) == 0
+
+
+def test_blocked_posts_are_drafted_only_once(tmp_path):
+    repo = _repo()
+    repo.upsert_post(_post("1"))
+    repo.add_draft(Draft(tweet_id="1", commentary="bad", model="test",
+                         safety_passed=False), status="blocked")
+    assert "1" in repo.drafted_tweet_ids()
+
+
+# ---------------- vet / revision ----------------
+
+class _FakeGenerator:
+    def __init__(self, revised_text="short and sweet h/t @user1"):
+        self.revised_text = revised_text
+        self.revisions = 0
+
+    def generate(self, post):
+        return Draft(tweet_id=post.tweet_id, commentary="x" * 300, model="fake")
+
+    def revise(self, post, previous, feedback):
+        self.revisions += 1
+        return Draft(tweet_id=post.tweet_id, commentary=self.revised_text, model="fake")
+
+
+def test_vet_revises_too_long_commentary_once(tmp_path):
+    repo = _repo()
+    orch = _orch(tmp_path, repo)
+    orch.generator = _FakeGenerator()
+    post = _post("1")
+    draft, ok, notes = orch._vet_commentary(post, orch.generator.generate(post))
+    assert ok is True
+    assert orch.generator.revisions == 1
+    assert draft.commentary == "short and sweet h/t @user1"
+
+
+def test_vet_blocks_when_revision_also_fails(tmp_path):
+    repo = _repo()
+    orch = _orch(tmp_path, repo)
+    orch.generator = _FakeGenerator(revised_text="y" * 300)  # still too long
+    post = _post("1")
+    draft, ok, notes = orch._vet_commentary(post, orch.generator.generate(post))
+    assert ok is False
+    assert notes.startswith("too_long")
+
+
+# ---------------- report / activity / PT ----------------
 
 def test_posted_times_stored_and_reported_in_pt(tmp_path):
     repo = _repo()
     repo.tz_name = "America/Los_Angeles"
     _queue(repo, "1", quote_score=0.9)
-    orch = _orch(tmp_path, repo, _FakePublisher())
+    orch = _orch(tmp_path, repo)
     orch.publish_due()
 
-    # stored: posted_at stays UTC (date math), posted_at_pt is the PT instant
     row = repo.conn.execute(
         "SELECT posted_at, posted_at_pt FROM posted_log").fetchone()
     assert row["posted_at"].endswith("+00:00")
     assert row["posted_at_pt"].endswith(("-07:00", "-08:00"))  # PDT / PST
 
-    # reported: activity log shows PT with the right label
     entry = orch.report()["activity"]["posted"][0]
     assert entry["tz"] in ("PDT", "PST")
     assert entry["posted_at"].endswith(("-07:00", "-08:00"))
@@ -163,11 +322,9 @@ def test_run_log_aggregates_daily_counts(tmp_path):
     repo.log_run("collect", read=31)         # second collect, same day
     repo.log_run("draft", judged=15, drafted=2)
 
-    # raw per-run rows record the failure detail
     publish_runs = [r for r in repo.recent_runs(72) if r["kind"] == "publish"]
     assert "403 simulated" in publish_runs[0]["detail"]
 
-    # the report aggregates per day: 50+31 reads, 15 judged, 2 drafted, 1 posted
     days = orch.report()["activity"]["days"]
     assert len(days) == 1
     assert days[0]["read"] == 81
@@ -187,7 +344,7 @@ def test_report_activity_log(tmp_path):
     activity = orch.report()["activity"]
     assert len(activity["posted"]) == 1
     assert activity["posted"][0]["url"] == "https://x.com/i/status/our_2"
-    assert activity["posted"][0]["author"] == "alice"
+    assert activity["posted"][0]["author"] == "user2"
     assert len(activity["problems"]) == 1
     assert activity["problems"][0]["status"] == "failed"
     assert "403 simulated" in activity["problems"][0]["note"]
