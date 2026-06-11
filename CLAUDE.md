@@ -39,9 +39,11 @@ Two swappable boundaries keep it portable (and keep the risky parts isolated):
 ## Commands
 
 ```
-xbot initdb | collect | score [--top N] | draft | review | publish | run | report
+xbot initdb | collect | score [--top N] | draft | review | publish | run
+     | reply-scan | snapshot | report
 ```
-`python -m xbot <cmd>` also works. Dry-run (default config) needs no keys.
+`python -m xbot <cmd>` also works. NOTE: config.yaml is LIVE (api source/publisher
++ Turso when TURSO_DATABASE_URL is set) — local runs touch production state.
 
 ## Locked product decisions (do not silently change)
 
@@ -56,10 +58,19 @@ xbot initdb | collect | score [--top N] | draft | review | publish | run | repor
   labels in `config.yaml > ranking.judge_examples`. Lexical heuristic is only the
   cheap pre-filter + offline fallback.
 - **Voice:** growth-first / operator energy, skill-sharing angle, **compact "steal
-  this" breakdown** (hook + 2-4 bullets + takeaway), **straight tone** (report
-  claims neutrally), **about the owner** (no leading @; subtle `h/t @handle` tail),
-  **no links** (embed carries source + keeps the $0.015 write tier), **never
-  fabricate** (safety rejects any number not in the source).
+  this" breakdown** (hook + 2-4 bullets + takeaway) or an **adaptive tutorial
+  thread** when the source is substantial (`posting.adaptive_threads`),
+  **straight tone** (report claims neutrally), **about the owner** (no leading @;
+  subtle `h/t @handle` tail), **never fabricate** (safety rejects any claim
+  number not in the source; list markers/@handle/URL digits exempt).
+- **NO URL in the main post — ever** (`posting.format: mention`). X buries
+  URL-bearing posts from non-Premium accounts (2026 algo) AND bills them $0.20 vs
+  $0.015. The source link is a self-reply at the bottom (`posting.attribution_reply`,
+  $0.20 — the biggest cost line; flip off to save ~$18/mo).
+- **Auto-reply engine** (`replies.*`): 0-1 reply per collect run to fresh
+  (<3h), on-topic posts from >5K-follower followed accounts. The follower-growth
+  lever (replies ≈27x a like). Hard caps + `replies.dry_run` rollout switch +
+  same kill switch. Replies never contain links/hashtags/@mentions/praise-only.
 - **Rollout:** manual `xbot review` first, then flip `mode.autonomous: true`.
 
 ## Config & secrets
@@ -92,14 +103,28 @@ xbot initdb | collect | score [--top N] | draft | review | publish | run | repor
    commentary is **per-post** (voice quality > the few tokens batching would save).
 7. **Secrets were pasted in chat** during setup → they must be rotated. Never echo a
    key back; only write to `.env`.
-8. **Phase 1/4 (`api_source.py`, `api_publisher.py`) are implemented but UNTESTED** —
-   they need a live X API account + OAuth token + credits. Don't claim them verified.
+8. **A generator refusal got TWEETED (2026-06-10).** With nothing to teach, the
+   LLM wrote "This post doesn't contain enough tactical content… drop the full
+   thread" as commentary; the only gates that day (keywords/numbers/length)
+   passed it, and `publish_due` trusted the stale `safety_passed` stamp 26h
+   later. Defenses now: SKIP sentinel in the prompt, deterministic
+   `REFUSAL_MARKERS` in safety.py, and a publish-time re-vet (fail-closed QA).
+   Don't weaken any of the three.
+9. **Truncated retweet stubs** ("RT @x: …cut off…") read like cliffhangers — the
+   judge prompt explicitly scores truncated/teaser text ≤0.3, and reply targets
+   exclude RTs. The 06-10 incident started with one.
+10. **Digits in @handles, list markers, and URLs are NOT fabrication** — the
+   number gate strips them first (real drafts got blocked over "@gregpr07").
 
 ## Phase status
 
-- ✅ Phase 0 (scaffold), teaching-first ranking, semantic judge, Groq commentary — built & verified on sample data.
-- 🔧 Phase 1 (live read) + Phase 4 (live write) — code written, needs X API access to test.
-- ⬜ Phase 5 — flip `mode.autonomous`, deploy to GitHub Actions + Turso.
+- ✅ LIVE + AUTONOMOUS since 2026-06-06: api source + api publisher + Turso +
+  GitHub Actions (collect every 3h; publish 3x/day PT windows with jitter).
+- ✅ Growth overhaul (2026-06-11): mention format (no URL in main post), adaptive
+  tutorial threads, hidden-link attribution reply, graded topic judge
+  (threshold 0.45), smart_trim, publish-time re-vet, follower snapshots.
+- 🔧 Auto-reply engine shipped in `replies.dry_run: true` — review `reply_log`
+  for 2-3 days, then flip `dry_run: false` (caps: 3/day week 1 → 6).
 
 ## Conventions
 

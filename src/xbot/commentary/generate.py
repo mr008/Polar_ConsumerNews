@@ -40,7 +40,7 @@ AUTO_ORDER = ["anthropic", "groq", "xai", "gemini", "openai"]
 
 
 class CommentaryGenerator(Protocol):
-    def generate(self, post: Post) -> Draft: ...
+    def generate(self, post: Post, allow_thread: bool = False) -> Draft: ...
 
 
 # ----------------------------- system prompt -----------------------------
@@ -48,7 +48,7 @@ class CommentaryGenerator(Protocol):
 def build_system_prompt(cfg: NS) -> str:
     v = cfg.voice
     max_chars = cfg.get("llm.max_commentary_chars", 240)
-    return f"""You write the commentary for a quote-tweet curator account whose mission is to SHARE SKILLS for making viral consumer-app content (AI UGC, content-driven growth, distribution).
+    return f"""You write the commentary for a curator account whose mission is to SHARE SKILLS for making viral consumer-app content (AI UGC, content-driven growth, distribution).
 
 VOICE: {v.style}. Punchy operator energy, NOT a measured curator. Skill-sharing angle: teach the tactic — why it works / the move to steal / the part people miss.
 
@@ -63,16 +63,49 @@ TONE: straight. Report the author's claims neutrally (e.g. "he shares a case stu
 
 HARD RULES (never break):
   - NEVER fabricate. Use ONLY facts/numbers that appear in the source post. Do not invent tool steps, metrics, or outcomes.
-  - No links (the quote embeds the source). No hashtags. Light emoji ok.
+  - No links. No hashtags. Light emoji ok.
   - Avoid politics, NSFW, harassment, medical/legal/investment advice.
+  - If the source has NO teachable material (a teaser, a cut-off retweet, a flex
+    with no method), output exactly: SKIP: <reason in <=8 words>
+    NEVER write prose about the source's shortcomings, NEVER address the author
+    or reader, NEVER ask for more content. SKIP is the only valid refusal.
 
-Return ONLY the post text — no preamble, no quotes around it."""
+Return ONLY the post text (or the SKIP line) — no preamble, no quotes around it."""
 
 
-def _user_prompt(post: Post) -> str:
+THREAD_INSTRUCTIONS = """
+This source is substantial, so you MAY write a SHORT TUTORIAL THREAD instead of one post — but ONLY if you can extract 3+ distinct, concrete steps from the source. Thread format:
+  - {n_parts} parts MAX, separated by a line containing exactly: ---
+  - Part 1 = the hook post (<= {hook_budget} chars INCLUDING the "h/t @{handle}" tail at its end)
+  - Each later part = numbered tutorial steps and/or the takeaway (<= {part_budget} chars each, no h/t tail, no URLs, no hashtags)
+If the source does not support 3+ concrete steps, write the normal single post instead."""
+
+
+def _user_prompt(post: Post, cfg: NS = None, allow_thread: bool = False) -> str:
+    extra = ""
+    if cfg is not None:
+        from ..publish.publisher import body_budget, part_budget  # lazy: avoid cycle
+        hook_budget = body_budget(post, cfg)
+        extra = (f"\nHARD LIMIT for this post: {hook_budget} characters before the "
+                 f"h/t tail — aim for {max(hook_budget - 25, 80)}. If in doubt, cut a bullet.")
+        if allow_thread:
+            extra += THREAD_INSTRUCTIONS.format(
+                n_parts=int(cfg.get("posting.max_thread_parts", 3)),
+                hook_budget=hook_budget,
+                part_budget=part_budget(cfg),
+                handle=post.author_handle)
     return (f"Source post by @{post.author_handle} ({post.author_name}):\n"
             f'"""\n{post.text}\n"""\n\n'
-            f"Write the quote-tweet commentary now. End with: h/t @{post.author_handle}")
+            f"Write the commentary now. End with: h/t @{post.author_handle}{extra}")
+
+
+def split_parts(text: str, cfg: NS) -> tuple[str, list[str]]:
+    """Split LLM output on '---' separator lines into (hook, thread parts)."""
+    chunks = [c.strip() for c in re.split(r"\n\s*---\s*\n", text.strip()) if c.strip()]
+    if not chunks:
+        return text.strip(), []
+    max_parts = int(cfg.get("posting.max_thread_parts", 3)) - 1 if cfg else 2
+    return chunks[0], chunks[1: 1 + max_parts]
 
 
 # ----------------------------- template (offline) -----------------------------
@@ -83,7 +116,7 @@ class TemplateCommentaryGenerator:
         self.max_chars = cfg.get("llm.max_commentary_chars", 240)
         self.credit = cfg.get("voice.credit_style", "subtle_tail")
 
-    def generate(self, post: Post) -> Draft:
+    def generate(self, post: Post, allow_thread: bool = False) -> Draft:
         hook = self._hook(post.text)
         bullets = self._bullets(post.text)
         takeaway = self._takeaway(post.text)
@@ -151,36 +184,40 @@ class OpenAICompatGenerator:
         self.temperature = cfg.get("llm.temperature", 0.7)
         self.system = build_system_prompt(cfg)
 
-    def generate(self, post: Post) -> Draft:
-        return self._call(post, messages=[
+    def generate(self, post: Post, allow_thread: bool = False) -> Draft:
+        return self._call(post, allow_thread=allow_thread, messages=[
             {"role": "system", "content": self.system},
-            {"role": "user", "content": _user_prompt(post)},
+            {"role": "user", "content": _user_prompt(post, self.cfg, allow_thread)},
         ])
 
     def revise(self, post: Post, previous: str, feedback: str) -> Draft:
-        """One editor-feedback rewrite (used by the QA gate / length check)."""
+        """One editor-feedback rewrite (used by the QA gate / length check).
+        A rejected thread retries as a compact SINGLE post — simpler to fix."""
         return self._call(post, messages=[
             {"role": "system", "content": self.system},
-            {"role": "user", "content": _user_prompt(post)},
+            {"role": "user", "content": _user_prompt(post, self.cfg)},
             {"role": "assistant", "content": previous},
             {"role": "user", "content": (
                 f"Editor rejected that draft: {feedback}\n"
-                "Rewrite it fixing ONLY that problem. Keep every other rule "
-                "(voice, format, h/t tail, no fabrication). Return only the post text.")},
+                "Rewrite it as ONE single post fixing ONLY that problem. Keep every "
+                "other rule (voice, format, h/t tail, no fabrication). "
+                "Return only the post text.")},
         ])
 
-    def _call(self, post: Post, messages: list[dict]) -> Draft:
+    def _call(self, post: Post, messages: list[dict], allow_thread: bool = False) -> Draft:
         from openai import OpenAI  # lazy import
         kwargs = {"api_key": os.environ[self.key_env]}
         if self.base_url:
             kwargs["base_url"] = self.base_url
         client = OpenAI(**kwargs)
         resp = client.chat.completions.create(
-            model=self.model, temperature=self.temperature, max_tokens=320,
+            model=self.model, temperature=self.temperature,
+            max_tokens=900 if allow_thread else 320,
             messages=messages,
         )
-        return Draft(tweet_id=post.tweet_id,
-                     commentary=resp.choices[0].message.content.strip(),
+        raw = resp.choices[0].message.content.strip()
+        hook, parts = split_parts(raw, self.cfg) if allow_thread else (raw, [])
+        return Draft(tweet_id=post.tweet_id, commentary=hook, parts=parts,
                      model=f"{self.provider}:{self.model}")
 
 
@@ -191,16 +228,19 @@ class AnthropicGenerator:
         self.temperature = cfg.get("llm.temperature", 0.7)
         self.system = build_system_prompt(cfg)
 
-    def generate(self, post: Post) -> Draft:
+    def generate(self, post: Post, allow_thread: bool = False) -> Draft:
         import anthropic  # lazy import
         client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
         msg = client.messages.create(
-            model=self.model, max_tokens=300, temperature=self.temperature,
+            model=self.model, max_tokens=900 if allow_thread else 300,
+            temperature=self.temperature,
             system=self.system,
-            messages=[{"role": "user", "content": _user_prompt(post)}],
+            messages=[{"role": "user",
+                       "content": _user_prompt(post, self.cfg, allow_thread)}],
         )
         text = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
-        return Draft(tweet_id=post.tweet_id, commentary=text.strip(), model=self.model)
+        hook, parts = split_parts(text.strip(), self.cfg) if allow_thread else (text.strip(), [])
+        return Draft(tweet_id=post.tweet_id, commentary=hook, parts=parts, model=self.model)
 
 
 def get_generator(cfg: NS) -> CommentaryGenerator:

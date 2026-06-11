@@ -60,7 +60,31 @@ CREATE TABLE IF NOT EXISTS drafts (
     safety_notes TEXT,
     status TEXT DEFAULT 'pending',
     note TEXT,
+    parts TEXT,
     created_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS reply_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    target_tweet_id TEXT,
+    target_author TEXT,
+    target_text TEXT,
+    reply_text TEXT,
+    model TEXT,
+    status TEXT,
+    note TEXT,
+    our_tweet_id TEXT,
+    created_at TEXT,
+    posted_at TEXT,
+    posted_at_pt TEXT
+);
+
+CREATE TABLE IF NOT EXISTS account_metrics (
+    day TEXT PRIMARY KEY,
+    followers INTEGER,
+    following INTEGER,
+    tweet_count INTEGER,
+    captured_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS posted_log (
@@ -83,6 +107,7 @@ CREATE TABLE IF NOT EXISTS run_log (
     n_judged INTEGER DEFAULT 0,
     n_drafted INTEGER DEFAULT 0,
     n_posted INTEGER DEFAULT 0,
+    n_replied INTEGER DEFAULT 0,
     detail TEXT
 );
 
@@ -92,6 +117,8 @@ CREATE INDEX IF NOT EXISTS idx_posts_author ON posts(author_handle);
 CREATE INDEX IF NOT EXISTS idx_metrics_tweet ON post_metrics(tweet_id);
 CREATE INDEX IF NOT EXISTS idx_posted_source ON posted_log(source_tweet_id);
 CREATE INDEX IF NOT EXISTS idx_candidates_status ON candidates(status);
+CREATE INDEX IF NOT EXISTS idx_reply_target ON reply_log(target_tweet_id);
+CREATE INDEX IF NOT EXISTS idx_reply_author ON reply_log(target_author);
 """
 
 
@@ -111,7 +138,9 @@ class SqliteRepository:
         self.conn.executescript(SCHEMA)
         # Migrations (2026-06) for pre-existing DBs. Errors = column exists.
         for ddl in ("ALTER TABLE posted_log ADD COLUMN posted_at_pt TEXT",
-                    "ALTER TABLE scores ADD COLUMN judged INTEGER DEFAULT 0"):
+                    "ALTER TABLE scores ADD COLUMN judged INTEGER DEFAULT 0",
+                    "ALTER TABLE drafts ADD COLUMN parts TEXT",
+                    "ALTER TABLE run_log ADD COLUMN n_replied INTEGER DEFAULT 0"):
             try:
                 self.conn.execute(ddl)
             except Exception:
@@ -248,18 +277,24 @@ class SqliteRepository:
     def add_draft(self, draft: Draft, status: str = "pending") -> int:
         cur = self.conn.execute(
             """INSERT INTO drafts (tweet_id, commentary, model, safety_passed,
-                   safety_notes, status, created_at)
-               VALUES (?,?,?,?,?,?,?)""",
+                   safety_notes, status, parts, created_at)
+               VALUES (?,?,?,?,?,?,?,?)""",
             (draft.tweet_id, draft.commentary, draft.model, int(draft.safety_passed),
-             draft.safety_notes, status, draft.created_at.isoformat()),
+             draft.safety_notes, status, json.dumps(draft.parts or []),
+             draft.created_at.isoformat()),
         )
         self.conn.commit()
         return cur.lastrowid
 
     def _row_to_draft(self, r: sqlite3.Row) -> Draft:
+        try:
+            parts = json.loads(r["parts"]) if r["parts"] else []
+        except (KeyError, IndexError, ValueError, TypeError):
+            parts = []
         return Draft(
             tweet_id=r["tweet_id"], commentary=r["commentary"], model=r["model"],
             safety_passed=bool(r["safety_passed"]), safety_notes=r["safety_notes"] or "",
+            parts=parts if isinstance(parts, list) else [],
             created_at=parse_dt(r["created_at"]),
         )
 
@@ -341,22 +376,22 @@ class SqliteRepository:
         )
         self.conn.commit()
 
-    # ---------- run log (per-run counters: read/judged/drafted/posted) ----------
+    # ---------- run log (per-run counters: read/judged/drafted/posted/replied) ----------
     def log_run(self, kind: str, read: int = 0, judged: int = 0, drafted: int = 0,
-                posted: int = 0, detail: str = "") -> None:
+                posted: int = 0, replied: int = 0, detail: str = "") -> None:
         now = utcnow()
         self.conn.execute(
             "INSERT INTO run_log (ts, ts_pt, kind, n_read, n_judged, n_drafted, "
-            "n_posted, detail) VALUES (?,?,?,?,?,?,?,?)",
+            "n_posted, n_replied, detail) VALUES (?,?,?,?,?,?,?,?,?)",
             (now.isoformat(), to_local(now, self.tz_name).isoformat(), kind,
-             read, judged, drafted, posted, (detail or "")[:300]),
+             read, judged, drafted, posted, replied, (detail or "")[:300]),
         )
         self.conn.commit()
 
     def recent_runs(self, within_hours: float = 72) -> list[dict]:
         cutoff = (utcnow() - timedelta(hours=within_hours)).isoformat()
         rows = self.conn.execute(
-            "SELECT ts, kind, n_read, n_judged, n_drafted, n_posted, detail "
+            "SELECT ts, kind, n_read, n_judged, n_drafted, n_posted, n_replied, detail "
             "FROM run_log WHERE ts >= ? ORDER BY ts ASC",
             (cutoff,),
         ).fetchall()
@@ -366,6 +401,7 @@ class SqliteRepository:
             out.append({"ts": local.isoformat(), "tz": local.tzname() or "UTC",
                         "kind": r["kind"], "read": r["n_read"], "judged": r["n_judged"],
                         "drafted": r["n_drafted"], "posted": r["n_posted"],
+                        "replied": r["n_replied"] or 0,
                         "detail": r["detail"] or ""})
         return out
 
@@ -380,17 +416,19 @@ class SqliteRepository:
         return r["c"]
 
     def daily_run_totals(self, days: int = 7) -> list[dict]:
-        """Per-PT-day totals of the run counters (read/judged/drafted/posted)."""
+        """Per-PT-day totals of the run counters (read/judged/drafted/posted/replied)."""
         cutoff = (utcnow() - timedelta(days=days)).isoformat()
         rows = self.conn.execute(
             "SELECT substr(ts_pt, 1, 10) AS day, SUM(n_read) AS n_read, "
             "SUM(n_judged) AS n_judged, SUM(n_drafted) AS n_drafted, "
-            "SUM(n_posted) AS n_posted FROM run_log WHERE ts >= ? "
+            "SUM(n_posted) AS n_posted, SUM(n_replied) AS n_replied "
+            "FROM run_log WHERE ts >= ? "
             "GROUP BY day ORDER BY day ASC",
             (cutoff,),
         ).fetchall()
         return [{"day": r["day"], "read": r["n_read"] or 0, "judged": r["n_judged"] or 0,
-                 "drafted": r["n_drafted"] or 0, "posted": r["n_posted"] or 0}
+                 "drafted": r["n_drafted"] or 0, "posted": r["n_posted"] or 0,
+                 "replied": r["n_replied"] or 0}
                 for r in rows]
 
     # ---------- activity log (surfaced by `xbot report`) ----------
@@ -442,6 +480,102 @@ class SqliteRepository:
             "SELECT COUNT(*) AS c FROM posted_log WHERE posted_at >= ?", (start,)
         ).fetchone()
         return r["c"]
+
+    # ---------- reply log (auto-reply engine) ----------
+    def log_reply(self, target_tweet_id: str, target_author: str, target_text: str,
+                  reply_text: str, model: str, status: str, note: str = "",
+                  our_tweet_id: str = "") -> int:
+        now = utcnow()
+        posted = now.isoformat() if status == "posted" else None
+        posted_pt = to_local(now, self.tz_name).isoformat() if status == "posted" else None
+        cur = self.conn.execute(
+            """INSERT INTO reply_log (target_tweet_id, target_author, target_text,
+                   reply_text, model, status, note, our_tweet_id,
+                   created_at, posted_at, posted_at_pt)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (target_tweet_id, target_author, (target_text or "")[:500], reply_text,
+             model, status, (note or "")[:300], our_tweet_id,
+             now.isoformat(), posted, posted_pt),
+        )
+        self.conn.commit()
+        return cur.lastrowid
+
+    def has_replied(self, target_tweet_id: str) -> bool:
+        """Any reply_log row for the target — including blocked ones, so a
+        failed target is never retried."""
+        r = self.conn.execute(
+            "SELECT 1 FROM reply_log WHERE target_tweet_id=? LIMIT 1",
+            (target_tweet_id,),
+        ).fetchone()
+        return r is not None
+
+    def reply_authors_since(self, days: int) -> set[str]:
+        cutoff = (utcnow() - timedelta(days=days)).isoformat()
+        rows = self.conn.execute(
+            "SELECT DISTINCT target_author FROM reply_log "
+            "WHERE status='posted' AND posted_at >= ?", (cutoff,),
+        ).fetchall()
+        return {r["target_author"] for r in rows}
+
+    def count_replies_today(self) -> int:
+        """'Today' = the local posting day, matching count_posted_today."""
+        start_local = to_local(utcnow(), self.tz_name).replace(
+            hour=0, minute=0, second=0, microsecond=0)
+        start = start_local.astimezone(timezone.utc).isoformat()
+        r = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM reply_log WHERE status='posted' AND posted_at >= ?",
+            (start,),
+        ).fetchone()
+        return r["c"]
+
+    def last_reply_at(self):
+        r = self.conn.execute(
+            "SELECT posted_at FROM reply_log WHERE status='posted' "
+            "ORDER BY posted_at DESC LIMIT 1"
+        ).fetchone()
+        return parse_dt(r["posted_at"]) if r and r["posted_at"] else None
+
+    def activity_replies(self, within_hours: float = 72) -> list[dict]:
+        cutoff = (utcnow() - timedelta(hours=within_hours)).isoformat()
+        rows = self.conn.execute(
+            "SELECT target_author, reply_text, status, note, our_tweet_id, "
+            "created_at, posted_at FROM reply_log WHERE created_at >= ? "
+            "ORDER BY created_at DESC",
+            (cutoff,),
+        ).fetchall()
+        out = []
+        for r in rows:
+            local = to_local(r["posted_at"] or r["created_at"], self.tz_name)
+            out.append({
+                "at": local.isoformat(), "tz": local.tzname() or "UTC",
+                "author": r["target_author"], "status": r["status"],
+                "note": (r["note"] or "")[:120],
+                "url": f"https://x.com/i/status/{r['our_tweet_id']}" if r["our_tweet_id"] else "",
+                "reply": ((r["reply_text"] or "").splitlines() or [""])[0][:100],
+            })
+        return out
+
+    # ---------- account metrics (follower trend) ----------
+    def snapshot_account(self, day: str, followers: int, following: int,
+                         tweet_count: int) -> None:
+        self.conn.execute(
+            """INSERT INTO account_metrics (day, followers, following, tweet_count, captured_at)
+               VALUES (?,?,?,?,?)
+               ON CONFLICT(day) DO UPDATE SET
+                   followers=excluded.followers, following=excluded.following,
+                   tweet_count=excluded.tweet_count, captured_at=excluded.captured_at""",
+            (day, followers, following, tweet_count, utcnow().isoformat()),
+        )
+        self.conn.commit()
+
+    def account_history(self, days: int = 14) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT day, followers, following, tweet_count FROM account_metrics "
+            "ORDER BY day DESC LIMIT ?", (days,),
+        ).fetchall()
+        return [{"day": r["day"], "followers": r["followers"],
+                 "following": r["following"], "tweet_count": r["tweet_count"]}
+                for r in reversed(rows)]
 
     # ---------- state ----------
     def get_state(self, key: str, default: str = "") -> str:

@@ -91,9 +91,10 @@ class Orchestrator:
         self.judged_count = len(judge_posts)  # posts sent to the LLM judge this run
         verdicts = self.judge.score_batch(judge_posts)  # {} on judge outage — no clobber
         self.judge_reasons = {tid: reason for tid, (_, _, reason) in verdicts.items()}
-        for tid, (tscore, on_topic, reason) in verdicts.items():
+        for tid, (tscore, topic_fit, reason) in verdicts.items():
             teaching[tid] = tscore
-            topic[tid] = 1.0 if on_topic else 0.0
+            # GRADED topic fit (0.0-1.0); legacy bool verdicts coerce cleanly.
+            topic[tid] = max(0.0, min(1.0, float(topic_fit)))
             if reason != "not judged":  # judge actually returned a verdict
                 judged_ids.add(tid)
 
@@ -162,7 +163,30 @@ class Orchestrator:
                 break
             if post.tweet_id in drafted_ids or self.repo.has_posted(post.tweet_id):
                 continue
-            draft, ok, notes = self._vet_commentary(post, self.generator.generate(post))
+            # Adaptive threads: only substantial sources earn the multi-part
+            # treatment; the generator still falls back to a single post if it
+            # can't extract 3+ concrete steps.
+            allow_thread = (bool(self.cfg.get("posting.adaptive_threads", False))
+                            and score.quote_worthy
+                            >= self.cfg.get("posting.thread_min_teaching", 0.75))
+            draft = self.generator.generate(post, allow_thread=allow_thread)
+
+            # SKIP sentinel: the generator's only sanctioned refusal. Store a
+            # blocked draft row (keeps one-attempt-per-post-EVER) but never
+            # treat the refusal as commentary.
+            if draft.commentary.strip().lower().startswith("skip:"):
+                reason = draft.commentary.strip()[5:].strip()[:80]
+                draft.safety_passed = False
+                draft.safety_notes = f"no_material:{reason}"
+                draft_id = self.repo.add_draft(draft, status="blocked")
+                self.repo.set_candidate(post.tweet_id, "skipped",
+                                        f"no_material:{reason}")
+                created.append({"draft_id": draft_id, "draft": draft, "post": post,
+                                "score": score, "ok": False,
+                                "notes": draft.safety_notes})
+                continue
+
+            draft, ok, notes = self._vet_commentary(post, draft)
             draft.safety_passed = ok
             draft.safety_notes = notes
             draft_id = self.repo.add_draft(draft, status="pending" if ok else "blocked")
@@ -180,13 +204,15 @@ class Orchestrator:
     def _vet_commentary(self, post: Post, draft: Draft) -> tuple[Draft, bool, str]:
         """Deterministic safety gates + LLM QA gate, with ONE revision attempt.
         Too-long / fabricated-number / QA-rejected drafts get a single editor-
-        feedback rewrite instead of being thrown away."""
+        feedback rewrite; a STILL-too-long rewrite gets a deterministic trim
+        (trimming beats blocking — too_long was 50% of all draft blocks)."""
         from .commentary.qa import qa_commentary
         notes = ""
         for attempt in (1, 2):
-            ok, notes = check_commentary(post, draft.commentary, self.cfg)
+            ok, notes = check_commentary(post, draft.commentary, self.cfg,
+                                         parts=draft.parts)
             if ok:
-                qa_ok, qa_issue = qa_commentary(post, draft.commentary, self.cfg)
+                qa_ok, qa_issue = qa_commentary(post, draft.full_text, self.cfg)
                 if qa_ok:
                     return draft, True, "ok"
                 notes = qa_issue
@@ -195,7 +221,19 @@ class Orchestrator:
             revise = getattr(self.generator, "revise", None)
             if revise is None:  # offline template generator can't rewrite
                 break
-            draft = revise(post, draft.commentary, self._revision_feedback(post, notes))
+            draft = revise(post, draft.full_text, self._revision_feedback(post, notes))
+            if draft.commentary.strip().lower().startswith("skip:"):
+                return draft, False, f"no_material:{draft.commentary.strip()[5:].strip()[:80]}"
+
+        # Last resort for a PURE length failure: deterministic trim + re-check.
+        if notes.startswith("too_long"):
+            from .publish.publisher import body_budget, smart_trim
+            draft.commentary = smart_trim(draft.commentary, body_budget(post, self.cfg))
+            ok, notes2 = check_commentary(post, draft.commentary, self.cfg,
+                                          parts=draft.parts)
+            if ok:
+                return draft, True, "ok(trimmed)"
+            notes = notes2
         return draft, False, notes
 
     def _revision_feedback(self, post: Post, notes: str) -> str:
@@ -276,6 +314,22 @@ class Orchestrator:
             if is_near_duplicate(post.text, self.repo.posted_source_texts(), near_dup):
                 self.repo.set_draft_status(draft_id, "skipped", "near_duplicate_at_publish")
                 continue
+            # PUBLISH-TIME RE-VET (the 2026-06-10 lesson: a refusal vetted before
+            # the QA gate existed published 26h later). The stored verdict is as
+            # old as the draft — re-run the deterministic gates + QA, fail-CLOSED,
+            # on exactly what's about to go out. A transient QA outage leaves the
+            # draft pending for the next window; a real rejection blocks it.
+            from .commentary.qa import qa_commentary  # lazy import
+            ok, revet_notes = check_commentary(post, draft.commentary, self.cfg,
+                                               parts=draft.parts)
+            if ok:
+                ok, revet_notes = qa_commentary(post, draft.full_text, self.cfg,
+                                                fail_open=False)
+            if not ok:
+                if revet_notes == "qa_unavailable":
+                    continue  # transient — draft stays pending, next window retries
+                self.repo.set_draft_status(draft_id, "blocked", f"revet:{revet_notes}")
+                continue
             try:
                 results.append(self._publish(draft_id, draft, post))
             except Exception as e:  # skip-on-failure: mark it and try the next-best draft
@@ -314,10 +368,128 @@ class Orchestrator:
     def _publish(self, draft_id: int, draft: Draft, post: Post) -> dict:
         result = self.publisher.publish(draft, post)
         our_id = result.get("id", "")
-        self.repo.log_posted(post.tweet_id, our_id, post.author_handle, post.text, draft.commentary)
+        self.repo.log_posted(post.tweet_id, our_id, post.author_handle, post.text,
+                             draft.full_text)
         self.repo.set_draft_status(draft_id, "posted")
         self.repo.set_candidate(post.tweet_id, "posted")
         return {"tweet_id": post.tweet_id, "our_id": our_id, "author": post.author_handle}
+
+    # ---------- auto-reply engine ----------
+    def reply_scan(self) -> dict:
+        """Pick 0-1 fresh on-topic post from a bigger followed account and reply.
+        Runs at the end of the collect workflow — zero extra API reads (targets,
+        judge verdicts, and follower counts are already in the DB). Caps and the
+        kill switch make this the most conservative path in the bot."""
+        result = self._reply_scan()
+        self.repo.log_run("reply", replied=result.get("count", 0),
+                          detail=result["status"])
+        return result
+
+    def _reply_scan(self) -> dict:
+        cfg = self.cfg
+        if not cfg.get("replies.enabled", False):
+            return {"status": "disabled", "count": 0}
+        if kill_switch_active(cfg):
+            return {"status": "killed", "count": 0}
+        max_per_day = int(cfg.get("replies.max_per_day", 6))
+        if self.repo.count_replies_today() >= max_per_day:
+            return {"status": "cap_reached", "count": 0}
+        last = self.repo.last_reply_at()
+        min_gap = float(cfg.get("replies.min_minutes_between", 45))
+        if last is not None:
+            from .models import utcnow
+            from datetime import timedelta
+            if utcnow() - last < timedelta(minutes=min_gap):
+                return {"status": "too_soon", "count": 0}
+
+        from .select.reply_targets import select_reply_targets
+        window_h = float(cfg.get("replies.max_target_age_minutes", 180)) / 60.0
+        posts = self.repo.recent_posts(within_hours=window_h)
+        own_handle = self.repo.get_state("own_handle", "")
+        targets, _skipped = select_reply_targets(posts, cfg, self.repo, own_handle)
+        if not targets:
+            return {"status": "no_targets", "count": 0}
+
+        from .commentary.reply import get_reply_generator
+        gen = getattr(self, "reply_generator", None) or get_reply_generator(cfg)
+        if gen is None:
+            return {"status": "no_llm", "count": 0}
+
+        publisher = self.publisher
+        if cfg.get("replies.dry_run", True):
+            from .publish.dryrun import DryRunPublisher
+            publisher = DryRunPublisher(cfg)
+
+        max_per_run = int(cfg.get("replies.max_per_run", 1))
+        posted, attempts = [], 0
+        for post in targets:
+            if len(posted) >= max_per_run or attempts >= max_per_run + 2:
+                break
+            attempts += 1
+            text, model = self._vet_reply(gen, post)
+            if text is None:
+                continue  # logged as blocked inside _vet_reply — never retried
+            try:
+                res = publisher.reply(text, post.tweet_id)
+            except Exception as e:
+                self.repo.log_reply(post.tweet_id, post.author_handle, post.text,
+                                    text, model, "failed",
+                                    f"{type(e).__name__}: {e}"[:200])
+                continue
+            status = "posted" if not cfg.get("replies.dry_run", True) else "dry_run"
+            self.repo.log_reply(post.tweet_id, post.author_handle, post.text,
+                                text, model, status, "", res.get("id", ""))
+            posted.append({"target": post.tweet_id, "author": post.author_handle,
+                           "our_id": res.get("id", "")})
+        status = "replied" if posted else "no_reply"
+        return {"status": status, "count": len(posted), "results": posted}
+
+    def _vet_reply(self, gen, post: Post) -> tuple[str | None, str]:
+        """check_reply + qa_reply with one revision. A blocked target is logged
+        (=> never retried via has_replied) and the scan moves on."""
+        from .commentary.qa import qa_reply
+        from .commentary.safety import check_reply
+        text, model = gen.generate(post)
+        notes = ""
+        for attempt in (1, 2):
+            if text.strip().lower().startswith("skip:"):
+                self.repo.log_reply(post.tweet_id, post.author_handle, post.text,
+                                    text, model, "blocked",
+                                    f"no_material:{text.strip()[5:].strip()[:80]}")
+                return None, model
+            ok, notes = check_reply(post, text, self.cfg)
+            if ok:
+                qa_ok, qa_issue = qa_reply(post, text, self.cfg)
+                if qa_ok:
+                    return text.strip(), model
+                notes = qa_issue
+            if attempt == 2:
+                break
+            text, model = gen.revise(post, text, notes)
+        self.repo.log_reply(post.tweet_id, post.author_handle, post.text,
+                            text, model, "blocked", notes)
+        return None, model
+
+    # ---------- account snapshot (follower trend) ----------
+    def snapshot(self) -> dict:
+        """Once per PT day, record follower/following counts (~$0.001 read) so
+        the report can show whether any of this is actually working."""
+        if not self.cfg.get("growth.snapshot_enabled", True):
+            return {"status": "disabled"}
+        from .models import to_local, utcnow
+        today = to_local(utcnow(), getattr(self.repo, "tz_name", "UTC")).date().isoformat()
+        if self.repo.get_state("last_snapshot_day") == today:
+            return {"status": "already_done", "day": today}
+        fetch_me = getattr(self.source, "fetch_me", None)
+        if fetch_me is None:
+            return {"status": "unsupported_source"}
+        me = fetch_me()
+        self.repo.snapshot_account(today, me.get("followers", 0),
+                                   me.get("following", 0), me.get("tweets", 0))
+        if me.get("handle"):
+            self.repo.set_state("own_handle", me["handle"])
+        self.repo.set_state("last_snapshot_day", today)
+        return {"status": "ok", "day": today, **me}
 
     # ---------- report ----------
     def report(self) -> dict:
@@ -325,12 +497,15 @@ class Orchestrator:
         return {
             "posts_seen": len(posts),
             "posted_today": self.repo.count_posted_today(),
+            "replied_today": self.repo.count_replies_today(),
             "pending_drafts": len(self.repo.pending_drafts()),
             "watching": len(self.repo.candidates("watching")),
             "skipped": len(self.repo.candidates("skipped")),
             "activity": {
                 "posted": self.repo.activity_posted(72),
+                "replies": self.repo.activity_replies(72),
                 "problems": self.repo.activity_drafts(["failed", "blocked", "stale"], 72),
                 "days": self.repo.daily_run_totals(7),
+                "followers": self.repo.account_history(8),
             },
         }

@@ -7,6 +7,8 @@
     xbot review        # manually approve/reject pending drafts (interactive)
     xbot publish       # post due items (auto mode) or report what's awaiting review
     xbot run           # collect -> draft -> publish (the full collector pass)
+    xbot reply-scan    # auto-reply engine: reply to 0-1 fresh post from the feed
+    xbot snapshot      # record today's follower count (once per PT day)
     xbot report        # daily summary
 """
 from __future__ import annotations
@@ -144,6 +146,34 @@ def cmd_run(args):
     print("publish:", result)
 
 
+def cmd_reply_scan(args):
+    orch = _setup(args)
+    result = orch.reply_scan()
+    mode = "DRY-RUN" if orch.cfg.get("replies.dry_run", True) else "LIVE"
+    print(f"reply-scan [{mode}]: {result}")
+
+
+def cmd_snapshot(args):
+    orch = _setup(args)
+    print("snapshot:", orch.snapshot())
+
+
+def _write_cost_per_post(cfg) -> float:
+    """Per published item: main post + thread parts at $0.015 each (estimated 1
+    part avg) + the $0.20 attribution link reply when enabled. Legacy link mode
+    = $0.20 main post."""
+    from .publish.publisher import posting_format, wants_attribution_reply
+    fmt = posting_format(cfg)
+    if fmt == "link":
+        return 0.20
+    cost = 0.015
+    if cfg.get("posting.adaptive_threads", False):
+        cost += 0.015                       # ~1 thread part on average
+    if wants_attribution_reply(cfg):
+        cost += 0.20                        # the hidden source-link reply
+    return cost
+
+
 def cmd_report(args):
     orch = _setup(args)
     r = orch.report()
@@ -151,6 +181,16 @@ def cmd_report(args):
     print("Daily report")
     for k, v in r.items():
         print(f"  {k:<16} {v}")
+
+    followers = activity.get("followers", [])
+    if followers:
+        print("\nFollower trend (daily snapshots)")
+        prev = None
+        for f in followers:
+            delta = "" if prev is None else f"  ({f['followers'] - prev:+d})"
+            print(f"  {f['day']}  followers {f['followers']:>5}{delta} · "
+                  f"following {f['following']}")
+            prev = f["followers"]
 
     posted = activity.get("posted", [])
     problems = activity.get("problems", [])
@@ -164,20 +204,36 @@ def cmd_report(args):
     if not posted and not problems:
         print("  (nothing posted, no failures)")
 
+    replies = activity.get("replies", [])
+    if replies:
+        print(f"\nReplies (last 72h) — {len(replies)}")
+        for e in replies:
+            when = e["at"][:16].replace("T", " ")
+            mark = {"posted": "✓", "dry_run": "·"}.get(e["status"], "✗")
+            tail = e["url"] or e["note"]
+            print(f"  {mark} [{e['status']}] {when}  → @{e['author']}  {tail}")
+            print(f"      {e['reply']}")
+
     days = activity.get("days", [])
     if days:
+        post_cost = _write_cost_per_post(orch.cfg)
         print("\nRun log — daily (PT days, last 7)")
-        totals = {"read": 0, "judged": 0, "drafted": 0, "posted": 0}
-        # Display-only spend estimate: reads ~$0.005/post, writes ~$0.20 (link mode).
+        totals = {"read": 0, "judged": 0, "drafted": 0, "posted": 0, "replied": 0}
+        # Display-only spend estimate: reads ~$0.005; writes priced per
+        # posting.format; engine replies $0.015.
         for d in days:
-            spend = d["read"] * 0.005 + d["posted"] * 0.20
+            spend = (d["read"] * 0.005 + d["posted"] * post_cost
+                     + d.get("replied", 0) * 0.015)
             print(f"  {d['day']}  read {d['read']:>3} · judged {d['judged']:>3} · "
-                  f"drafted {d['drafted']:>2} · posted {d['posted']}   ≈${spend:.2f}")
+                  f"drafted {d['drafted']:>2} · posted {d['posted']} · "
+                  f"replied {d.get('replied', 0)}   ≈${spend:.2f}")
             for k in totals:
-                totals[k] += d[k]
-        total_spend = totals["read"] * 0.005 + totals["posted"] * 0.20
+                totals[k] += d.get(k, 0)
+        total_spend = (totals["read"] * 0.005 + totals["posted"] * post_cost
+                       + totals["replied"] * 0.015)
         print(f"  {'total':<10}  read {totals['read']:>3} · judged {totals['judged']:>3} · "
-              f"drafted {totals['drafted']:>2} · posted {totals['posted']}   ≈${total_spend:.2f}")
+              f"drafted {totals['drafted']:>2} · posted {totals['posted']} · "
+              f"replied {totals['replied']}   ≈${total_spend:.2f}")
 
 
 def main(argv=None):
@@ -203,6 +259,8 @@ def main(argv=None):
     p_approve.set_defaults(func=cmd_approve)
     sub.add_parser("publish").set_defaults(func=cmd_publish)
     sub.add_parser("run").set_defaults(func=cmd_run)
+    sub.add_parser("reply-scan").set_defaults(func=cmd_reply_scan)
+    sub.add_parser("snapshot").set_defaults(func=cmd_snapshot)
     sub.add_parser("report").set_defaults(func=cmd_report)
 
     args = parser.parse_args(argv)

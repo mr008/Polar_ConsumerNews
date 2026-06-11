@@ -48,7 +48,10 @@ scoring_weights:               # ENGAGEMENT composite (the secondary signal).
   topic_fit: 0.10
 
 thresholds:
-  topic_fit_min: 0.55
+  # 0.45 works because the judge now emits a GRADED topic_fit (0.0-1.0) instead
+  # of a hard true/false — adjacent-but-useful content (general marketing,
+  # creator economy, AI tooling) lands ~0.5 and clears the bar.
+  topic_fit_min: 0.45
   quote_worthy_min: 0.35       # looser floor — keeps resonant posts (e.g. adriamatz)
   near_dup_similarity: 0.82
 recency_tau_hours: 8
@@ -101,10 +104,25 @@ posting:
   # When the queue is full but a new candidate beats the weakest pending draft
   # by this quote_score margin, the weak draft is retired and replaced.
   supersede_margin: 0.15
-  # Cross-account quote_tweet_id is broken (X, ~Feb 2026). Instead, post standalone
-  # and append the source URL — X often auto-embeds it as a quote card, and it's a
-  # clickable link either way. NOTE: a URL bumps the write to ~$0.20/post (vs $0.015).
-  link_instead_of_quote: true
+  # FORMAT (2026-06): X's algorithm gives near-zero distribution to posts
+  # containing URLs (non-Premium), and a URL bumps the write to ~$0.20 (vs
+  # $0.015). So the MAIN POST never carries a URL anymore:
+  #   mention — commentary + "h/t @handle" tail; source link hidden in a
+  #             self-reply below (attribution_reply). THE default.
+  #   link    — legacy: URL appended to the main post (buried + $0.20). Rollback only.
+  # (Cross-account quote_tweet_id is still broken on X, ~Feb 2026.)
+  format: mention
+  # ADAPTIVE THREADS: when the judge's teaching score clears thread_min_teaching
+  # AND the source carries 3+ concrete steps, the draft becomes a short tutorial
+  # thread (hook + step replies). Otherwise a single compact post.
+  adaptive_threads: true
+  thread_min_teaching: 0.75
+  max_thread_parts: 3          # hook + up to 2 step replies (attribution excluded)
+  max_part_chars: 270
+  # The hidden source link: a final self-reply "source: <url>". ⚠ $0.20 per
+  # published item (~$18/mo at 3/day) — the single biggest cost line. Flip to
+  # false to save all of it (the h/t mention still credits the author).
+  attribution_reply: true
 
 safety:
   exclude: [politics, ragebait, nsfw, harassment, personal_drama, medical_advice, legal_advice, investment_advice]
@@ -133,8 +151,32 @@ llm:
   commentary_model: "claude-sonnet-4-6"            # Sonnet — the public voice
   classifier_model: "claude-haiku-4-5-20251001"    # (legacy field; judge_model below is used)
   embeddings_model: "text-embedding-3-small"
-  max_commentary_chars: 230    # leaves room for the appended source URL (link mode)
+  # Target the prompt asks for — deliberately under the real ~250 budget so the
+  # model has headroom (too_long was 50% of all draft blocks at 230).
+  max_commentary_chars: 200
   temperature: 0.7
+
+# AUTO-REPLY ENGINE — the follower-growth lever. Replies to fresh, on-topic
+# posts from bigger accounts in the (followed) home feed. Runs at the end of
+# each collect workflow; zero extra API reads. Conservative caps on purpose:
+# automated replies are the highest-ToS-risk surface in the bot.
+replies:
+  enabled: true
+  dry_run: true                # ROLLOUT SWITCH: drafts logged to reply_log, nothing posted
+  max_per_day: 3               # ramp plan: 3 (week 1) -> 6 after quality review
+  max_per_run: 1
+  min_minutes_between: 45
+  author_cooldown_days: 3
+  min_author_followers: 5000
+  max_target_age_minutes: 180  # matches the 3h collect cadence
+  min_topic_fit: 0.45
+  min_teaching: 0.2            # lighter than the QT bar — we're adding value, not curating
+  max_reply_chars: 240
+  model: "claude-sonnet-4-6"   # the public voice — same as commentary
+  exclude_authors: []
+
+growth:
+  snapshot_enabled: true       # daily follower-count snapshot (~$0.001/day)
 
 ops:
   db_path: "data/state.db"

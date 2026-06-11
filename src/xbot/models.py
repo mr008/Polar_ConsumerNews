@@ -123,7 +123,15 @@ class Draft:
     model: str
     safety_passed: bool = False
     safety_notes: str = ""
+    # Adaptive threads: continuation tweets posted as self-replies under the
+    # commentary (the hook). Empty list = plain single post.
+    parts: list[str] = field(default_factory=list)
     created_at: datetime = field(default_factory=utcnow)
+
+    @property
+    def full_text(self) -> str:
+        """Hook + thread parts as one blob — for QA, near-dup, and the posted log."""
+        return "\n\n".join([self.commentary, *self.parts]) if self.parts else self.commentary
 
 
 def to_jsonable(obj) -> dict:

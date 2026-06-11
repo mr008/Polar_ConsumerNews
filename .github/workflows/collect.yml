@@ -1,11 +1,13 @@
 name: collect
 
-# Reads the feed, judges it (Claude), and drafts commentary into Turso.
-# Budget-conscious cadence (every 6h). since_id read-dedup means each run only
-# pays for posts newer than the last one stored (cap 50/run = hard ceiling).
+# Reads the feed, judges it (Claude), drafts commentary, snapshots the follower
+# count (once/day), and runs the reply engine — all into Turso.
+# Every 3h: since_id read-dedup means the SAME total posts are read per month as
+# the old 6h cadence (each run only pays for posts newer than the last one
+# stored) — fresher targets for the reply engine at no extra read cost.
 on:
   schedule:
-    - cron: "0 */6 * * *"     # every 6 hours
+    - cron: "0 */3 * * *"     # every 3 hours
   workflow_dispatch: {}
 
 jobs:
@@ -17,7 +19,7 @@ jobs:
         with:
           python-version: "3.13"
       - run: pip install -e ".[x,llm,turso]"
-      - name: collect -> draft -> report
+      - name: collect -> draft -> snapshot -> reply -> report
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           X_API_KEY: ${{ secrets.X_API_KEY }}
@@ -30,4 +32,6 @@ jobs:
         run: |
           xbot collect
           xbot draft
+          xbot snapshot
+          xbot reply-scan
           xbot report

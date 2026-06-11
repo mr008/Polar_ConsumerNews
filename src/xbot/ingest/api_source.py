@@ -88,6 +88,25 @@ class ApiSourceAdapter:
             )
         return out
 
+    def fetch_me(self) -> dict:
+        """Own-account public metrics (~$0.001 owned read) — the follower trend
+        is THE success metric for the growth work; everything else is a proxy."""
+        from requests_oauthlib import OAuth1Session  # lazy import
+
+        session = OAuth1Session(self.ck, self.cs, self.at, self.ats)
+        resp = session.get(f"{API_BASE}/users/me",
+                           params={"user.fields": "public_metrics,username"},
+                           timeout=30)
+        resp.raise_for_status()
+        data = resp.json().get("data", {})
+        pm = data.get("public_metrics", {})
+        return {
+            "handle": data.get("username", ""),
+            "followers": pm.get("followers_count", 0),
+            "following": pm.get("following_count", 0),
+            "tweets": pm.get("tweet_count", 0),
+        }
+
     @staticmethod
     def _to_post(t: dict, users: dict) -> Post:
         author = users.get(t.get("author_id"), {})

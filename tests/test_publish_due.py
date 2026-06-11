@@ -44,8 +44,9 @@ def _queue(repo, tid, quote_score, safety_passed=True, age_hours=0,
            handle=None, text=None):
     repo.upsert_post(_post(tid, handle=handle, text=text))
     repo.save_score(Score(tweet_id=tid, quote_score=quote_score))
-    repo.add_draft(Draft(tweet_id=tid, commentary=f"take on {tid}", model="test",
-                         safety_passed=safety_passed,
+    # digit-free commentary: the publish-time re-vet runs the fabrication gate
+    repo.add_draft(Draft(tweet_id=tid, commentary="a sharp growth take worth stealing",
+                         model="test", safety_passed=safety_passed,
                          created_at=utcnow() - timedelta(hours=age_hours)))
 
 
@@ -259,12 +260,14 @@ def test_blocked_posts_are_drafted_only_once(tmp_path):
 # ---------------- vet / revision ----------------
 
 class _FakeGenerator:
-    def __init__(self, revised_text="short and sweet h/t @user1"):
+    def __init__(self, revised_text="short and sweet h/t @user1",
+                 first_text="x" * 300):
         self.revised_text = revised_text
+        self.first_text = first_text
         self.revisions = 0
 
-    def generate(self, post):
-        return Draft(tweet_id=post.tweet_id, commentary="x" * 300, model="fake")
+    def generate(self, post, allow_thread=False):
+        return Draft(tweet_id=post.tweet_id, commentary=self.first_text, model="fake")
 
     def revise(self, post, previous, feedback):
         self.revisions += 1
@@ -282,14 +285,105 @@ def test_vet_revises_too_long_commentary_once(tmp_path):
     assert draft.commentary == "short and sweet h/t @user1"
 
 
-def test_vet_blocks_when_revision_also_fails(tmp_path):
+def test_vet_trims_when_revision_still_too_long(tmp_path):
+    # too_long was 50% of all draft blocks — a still-too-long rewrite now gets a
+    # deterministic trim instead of being thrown away.
     repo = _repo()
     orch = _orch(tmp_path, repo)
-    orch.generator = _FakeGenerator(revised_text="y" * 300)  # still too long
+    orch.generator = _FakeGenerator(revised_text="y" * 300)
+    post = _post("1")
+    draft, ok, notes = orch._vet_commentary(post, orch.generator.generate(post))
+    assert ok is True
+    assert notes == "ok(trimmed)"
+    assert len(draft.commentary) <= 280
+
+
+def test_vet_blocks_when_revision_fails_for_non_length_reason(tmp_path):
+    repo = _repo()
+    orch = _orch(tmp_path, repo)
+    # the rewrite invents a number that isn't in the source — not trimmable
+    orch.generator = _FakeGenerator(revised_text="claims 99% growth h/t @user1")
     post = _post("1")
     draft, ok, notes = orch._vet_commentary(post, orch.generator.generate(post))
     assert ok is False
-    assert notes.startswith("too_long")
+    assert notes.startswith("fabricated_number")
+
+
+def test_make_drafts_skip_sentinel_blocks_without_commentary(tmp_path):
+    repo = _repo()
+    repo.upsert_post(_post("1"))
+    judge = _FakeJudge({"1": (0.9, 1.0, "solid tactic")})
+    orch = _orch(tmp_path, repo, judge=judge)
+    orch.generator = _FakeGenerator(first_text="SKIP: cliffhanger, no lesson yet")
+    created = orch.make_drafts()
+    assert len(created) == 1
+    assert created[0]["ok"] is False
+    assert created[0]["notes"].startswith("no_material")
+    assert "1" in repo.drafted_tweet_ids()          # one attempt per post, EVER
+    assert repo.pending_drafts() == []              # never queued
+    assert "1" in repo.candidates("skipped")
+
+
+# ---------------- publish-time re-vet (the 2026-06-10 refusal incident) ----------------
+
+def test_publish_revet_blocks_grandfathered_refusal(tmp_path):
+    """A draft vetted before a gate existed must not post on its stale verdict:
+    the refusal that published on Jun 10 was exactly this hole."""
+    repo = _repo()
+    refusal = ("This post doesn't contain enough tactical content to build a "
+               "skill-share breakdown from. Drop the full thread and I'll turn "
+               "it into a sharp breakdown.")
+    repo.upsert_post(_post("1"))
+    repo.save_score(Score(tweet_id="1", quote_score=0.9))
+    repo.add_draft(Draft(tweet_id="1", commentary=refusal, model="test",
+                         safety_passed=True))     # grandfathered: stamped ok
+    pub = _FakePublisher()
+    result = _orch(tmp_path, repo, pub).publish_due()
+    assert pub.published == []
+    assert result["status"] == "queue_empty"
+    blocked = repo.activity_drafts(["blocked"], 1)
+    assert blocked and blocked[0]["note"].startswith("revet:refusal_meta")
+
+
+# ---------------- thread publishing chain ----------------
+
+def test_dryrun_publisher_chains_parts_and_attribution(tmp_path):
+    from xbot.publish.dryrun import DryRunPublisher
+    cfg = NS({"posting": {"format": "mention", "attribution_reply": True,
+                          "max_thread_parts": 3}})
+    pub = DryRunPublisher(cfg)
+    post = _post("1")
+    post.url = "https://x.com/user1/status/1"
+    draft = Draft(tweet_id="1", commentary="hook line h/t @user1", model="t",
+                  parts=["step one and step two, then the takeaway"])
+    res = pub.publish(draft, post)
+    assert res["ok"] is True
+    assert res["mode"] == "mention"
+    assert len(res["thread_ids"]) == 2      # 1 content part + 1 attribution reply
+
+
+def test_api_publisher_chain_stops_on_part_failure(tmp_path, monkeypatch):
+    for k in ("X_API_KEY", "X_API_SECRET", "X_ACCESS_TOKEN", "X_ACCESS_TOKEN_SECRET"):
+        monkeypatch.setenv(k, "test-key")
+    from xbot.publish.api_publisher import ApiPublisher
+    cfg = NS({"posting": {"format": "mention", "attribution_reply": True}})
+    pub = ApiPublisher(cfg)
+    monkeypatch.setattr(pub, "_session", lambda: None)
+    monkeypatch.setattr(pub, "_post",
+                        lambda session, payload: {"id": "main-id"})
+
+    def failing_reply(text, prev_id):
+        raise RuntimeError("simulated part failure")
+    monkeypatch.setattr(pub, "reply", failing_reply)
+
+    post = _post("1")
+    post.url = "https://x.com/user1/status/1"
+    draft = Draft(tweet_id="1", commentary="hook line h/t @user1", model="t",
+                  parts=["a step part"])
+    res = pub.publish(draft, post)
+    assert res["ok"] is True                # the hook stays up
+    assert res["id"] == "main-id"
+    assert res["thread_ids"] == []          # chain stopped, nothing deleted
 
 
 # ---------------- report / activity / PT ----------------
