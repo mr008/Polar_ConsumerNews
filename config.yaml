@@ -162,7 +162,7 @@ llm:
 # automated replies are the highest-ToS-risk surface in the bot.
 replies:
   enabled: true
-  dry_run: true                # ROLLOUT SWITCH: drafts logged to reply_log, nothing posted
+  dry_run: false               # LIVE (owner call, 2026-06-12) — flip true to pause posting
   max_per_day: 3               # ramp plan: 3 (week 1) -> 6 after quality review
   max_per_run: 1
   min_minutes_between: 45
