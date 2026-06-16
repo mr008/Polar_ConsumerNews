@@ -33,7 +33,7 @@ class ApiSourceAdapter:
         url = f"{API_BASE}/users/{self.uid}/timelines/reverse_chronological"
         params = {
             "max_results": min(100, max(5, limit)),
-            "tweet.fields": "created_at,public_metrics,lang,referenced_tweets,entities,attachments",
+            "tweet.fields": "created_at,public_metrics,lang,referenced_tweets,entities,attachments,reply_settings",
             "expansions": "author_id",
             "user.fields": "public_metrics,username,name",
         }
@@ -130,6 +130,7 @@ class ApiSourceAdapter:
             has_media="attachments" in t,
             has_link=bool(t.get("entities", {}).get("urls")),
             canonical_id=canonical,
+            reply_settings=t.get("reply_settings"),
             metrics=Metrics(
                 likes=pm.get("like_count", 0),
                 reposts=pm.get("retweet_count", 0),

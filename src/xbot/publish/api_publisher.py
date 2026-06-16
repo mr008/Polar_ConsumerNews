@@ -38,9 +38,20 @@ class ApiPublisher:
         if resp.status_code == 403:
             # RuntimeError (not SystemExit) so the orchestrator can skip to the
             # next-best draft instead of the whole run dying.
+            body = resp.text[:300]
+            low = body.lower()
+            # Conversation-level reply restriction (author limits who can reply)
+            # — NOT an app-permission problem. Marked so the caller logs it as a
+            # skip, not a "failed" write. The reply_settings target filter should
+            # prevent most of these, but author-specific blocks still land here.
+            if "reply" in low and "not allowed" in low:
+                raise RuntimeError(
+                    "reply_not_allowed: the conversation's reply settings block "
+                    "this account from replying.\n" + body
+                )
             raise RuntimeError(
                 "403 from POST /2/tweets — check the app's Read+Write permission "
-                "and regenerate the Access Token if needed.\n" + resp.text[:300]
+                "and regenerate the Access Token if needed.\n" + body
             )
         resp.raise_for_status()
         return resp.json().get("data", {})

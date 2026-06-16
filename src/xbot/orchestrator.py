@@ -432,9 +432,18 @@ class Orchestrator:
             try:
                 res = publisher.reply(text, post.tweet_id)
             except Exception as e:
-                self.repo.log_reply(post.tweet_id, post.author_handle, post.text,
-                                    text, model, "failed",
-                                    f"{type(e).__name__}: {e}"[:200])
+                # A conversation-level reply restriction isn't a failure on our
+                # side — X just won't let this account reply there. Log it as
+                # "skipped" (keeps the failure count honest) and move on; the row
+                # still makes has_replied() true so the target is never retried.
+                emsg = str(e)
+                restricted = ("reply_not_allowed" in emsg
+                              or "not allowed" in emsg.lower())
+                self.repo.log_reply(
+                    post.tweet_id, post.author_handle, post.text, text, model,
+                    "skipped" if restricted else "failed",
+                    ("reply_restricted: conversation blocks replies from this account"
+                     if restricted else f"{type(e).__name__}: {e}")[:200])
                 continue
             status = "posted" if not cfg.get("replies.dry_run", True) else "dry_run"
             self.repo.log_reply(post.tweet_id, post.author_handle, post.text,

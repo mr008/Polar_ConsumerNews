@@ -43,7 +43,7 @@ def _post(tid, handle="bigshot", followers=20000, age_minutes=30, **kw):
         tweet_id=tid, author_handle=handle, author_name=handle,
         text=SOURCE_TEXT, created_at=utcnow() - timedelta(minutes=age_minutes),
         author_follower_count=followers, url=f"https://x.com/{handle}/status/{tid}",
-        metrics=Metrics(likes=50),
+        metrics=Metrics(likes=50), reply_settings="everyone",
     )
     defaults.update(kw)
     return Post(**defaults)
@@ -104,6 +104,9 @@ def test_target_selection_filters(tmp_path):
     _seed(repo, _post("offtopic", handle="off"), topic=0.1)         # low topic
     _seed(repo, _post("unjudged", handle="uj"), judged=False)       # no verdict
     _seed(repo, _post("mine", handle="me_bot"))                     # own post
+    _seed(repo, _post("restricted", handle="restr",                 # author limits replies
+                      reply_settings="following"))
+    _seed(repo, _post("unknown_rs", handle="unk", reply_settings=None))  # not yet fetched
 
     targets, skipped = select_reply_targets(
         repo.recent_posts(72), cfg, repo, own_handle="me_bot")
@@ -115,6 +118,8 @@ def test_target_selection_filters(tmp_path):
     assert reasons["offtopic"].startswith("low_topic")
     assert reasons["unjudged"] == "not_judged"
     assert reasons["mine"] == "own_post"
+    assert reasons["restricted"] == "reply_restricted:following"
+    assert reasons["unknown_rs"] == "reply_restricted:unknown"
 
 
 def test_targets_ranked_big_and_fresh_first(tmp_path):
@@ -223,6 +228,42 @@ def test_gate_blocked_reply_logged_and_next_target_tried(tmp_path):
     assert result["results"][0]["target"] == "t2"
     assert repo.has_replied("t1")        # blocked, never retried
     assert repo.count_replies_today() == 1
+
+
+class _RestrictedReplyPublisher:
+    """Raises the conversation-restriction 403 for listed targets (the author
+    limits who can reply), succeeds for everything else."""
+
+    def __init__(self, restricted):
+        self.restricted = set(restricted)
+        self.replies = []
+
+    def reply(self, text, in_reply_to_tweet_id):
+        if in_reply_to_tweet_id in self.restricted:
+            raise RuntimeError("reply_not_allowed: the conversation's reply "
+                               "settings block this account from replying.")
+        self.replies.append((text, in_reply_to_tweet_id))
+        return {"ok": True, "id": f"our_{in_reply_to_tweet_id}"}
+
+    def publish(self, draft, post):
+        return {"ok": True, "id": "x"}
+
+
+def test_reply_restriction_403_logged_as_skip_not_failure(tmp_path):
+    repo = _repo()
+    _seed(repo, _post("t1", handle="alice", followers=900000))   # ranked first, restricted
+    _seed(repo, _post("t2", handle="bob", followers=10000))      # next, succeeds
+    pub = _RestrictedReplyPublisher(restricted={"t1"})
+    orch = _orch(tmp_path, repo, gen=_FakeReplyGen(), publisher=pub, dry_run=False)
+    result = orch.reply_scan()
+    assert result["count"] == 1
+    assert result["results"][0]["target"] == "t2"
+    assert pub.replies == [(GOOD_REPLY, "t2")]
+    rows = {r["author"]: r for r in repo.activity_replies(1)}
+    assert rows["alice"]["status"] == "skipped"          # NOT "failed"
+    assert rows["alice"]["note"].startswith("reply_restricted")
+    assert repo.has_replied("t1")                        # never retried
+    assert repo.count_replies_today() == 1               # skip didn't consume the cap
 
 
 def test_run_log_records_replied(tmp_path):

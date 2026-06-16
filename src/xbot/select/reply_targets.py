@@ -53,6 +53,12 @@ def select_reply_targets(posts: list[Post], cfg: NS, repo,
             skip(p, "own_post"); continue
         if p.author_handle.lower() in exclude:
             skip(p, "excluded_author"); continue
+        # X reply controls: a non-"everyone" conversation (or one whose setting we
+        # haven't fetched yet) refuses replies from a non-following/unverified
+        # account with a 403. Skip those BEFORE we spend an LLM call drafting a
+        # reply that can never post. (reply_settings comes free from collect.)
+        if (p.reply_settings or "").lower() != "everyone":
+            skip(p, f"reply_restricted:{p.reply_settings or 'unknown'}"); continue
         if p.author_follower_count < min_followers:
             skip(p, f"small_author:{p.author_follower_count}"); continue
         ok, reason = classify_source(p, cfg)

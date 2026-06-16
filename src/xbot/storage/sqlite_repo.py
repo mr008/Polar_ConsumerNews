@@ -25,7 +25,8 @@ CREATE TABLE IF NOT EXISTS posts (
     has_media INTEGER DEFAULT 0,
     has_link INTEGER DEFAULT 0,
     canonical_id TEXT,
-    first_seen_at TEXT
+    first_seen_at TEXT,
+    reply_settings TEXT
 );
 
 CREATE TABLE IF NOT EXISTS post_metrics (
@@ -140,7 +141,8 @@ class SqliteRepository:
         for ddl in ("ALTER TABLE posted_log ADD COLUMN posted_at_pt TEXT",
                     "ALTER TABLE scores ADD COLUMN judged INTEGER DEFAULT 0",
                     "ALTER TABLE drafts ADD COLUMN parts TEXT",
-                    "ALTER TABLE run_log ADD COLUMN n_replied INTEGER DEFAULT 0"):
+                    "ALTER TABLE run_log ADD COLUMN n_replied INTEGER DEFAULT 0",
+                    "ALTER TABLE posts ADD COLUMN reply_settings TEXT"):
             try:
                 self.conn.execute(ddl)
             except Exception:
@@ -152,16 +154,17 @@ class SqliteRepository:
         self.conn.execute(
             """INSERT INTO posts (tweet_id, author_handle, author_name, author_follower_count,
                    text, created_at, url, lang, is_reply, is_retweet, is_quote,
-                   has_media, has_link, canonical_id, first_seen_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                   has_media, has_link, canonical_id, first_seen_at, reply_settings)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(tweet_id) DO UPDATE SET
                    author_follower_count=excluded.author_follower_count,
-                   text=excluded.text""",
+                   text=excluded.text,
+                   reply_settings=COALESCE(excluded.reply_settings, posts.reply_settings)""",
             (post.tweet_id, post.author_handle, post.author_name, post.author_follower_count,
              post.text, post.created_at.isoformat(), post.url, post.lang,
              int(post.is_reply), int(post.is_retweet), int(post.is_quote),
              int(post.has_media), int(post.has_link), post.canonical_id,
-             utcnow().isoformat()),
+             utcnow().isoformat(), post.reply_settings),
         )
         self.add_metrics(post.tweet_id, post.metrics)
         self.conn.commit()
@@ -195,6 +198,7 @@ class SqliteRepository:
             is_quote=bool(row["is_quote"]), has_media=bool(row["has_media"]),
             has_link=bool(row["has_link"]), metrics=metrics,
             canonical_id=row["canonical_id"],
+            reply_settings=row["reply_settings"],
         )
 
     def get_post(self, tweet_id: str) -> Optional[Post]:

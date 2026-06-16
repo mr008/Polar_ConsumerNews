@@ -71,6 +71,10 @@ class Post:
     metrics: Metrics = field(default_factory=Metrics)
     # canonical_id collapses retweets/quotes back to the original being amplified
     canonical_id: Optional[str] = None
+    # X reply controls: "everyone" | "following" | "mentionedUsers" | "subscribers"
+    # | "verified". Only "everyone" posts are repliable from a small account, so
+    # the auto-reply engine targets those exclusively. None = unknown (pre-fetch).
+    reply_settings: Optional[str] = None
 
     def __post_init__(self):
         self.created_at = parse_dt(self.created_at)

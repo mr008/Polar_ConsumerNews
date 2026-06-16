@@ -122,7 +122,9 @@ posting:
   # The hidden source link: a final self-reply "source: <url>". ⚠ $0.20 per
   # published item (~$18/mo at 3/day) — the single biggest cost line. Flip to
   # false to save all of it (the h/t mention still credits the author).
-  attribution_reply: true
+  # OFF (2026-06-15, owner call): the dangling "source:" self-reply cluttered the
+  # profile timeline. The h/t @handle tail still credits the author.
+  attribution_reply: false
 
 safety:
   exclude: [politics, ragebait, nsfw, harassment, personal_drama, medical_advice, legal_advice, investment_advice]
@@ -161,13 +163,25 @@ llm:
 # each collect workflow; zero extra API reads. Conservative caps on purpose:
 # automated replies are the highest-ToS-risk surface in the bot.
 replies:
-  enabled: true
+  # DISABLED 2026-06-15: X's "Operation Kill the bots" policy (effective
+  # 2026-02-23) makes POST /2/tweets reject ALL programmatic replies on
+  # Free/Basic/Pro/Pay-Per-Use plans unless the target's author has @mentioned
+  # or quoted us first. Confirmed live: even reply_settings="everyone" posts
+  # 403 with "...not allowed because you have not been mentioned or otherwise
+  # engaged by the author...". No code fix revives this; only manual replies or
+  # Enterprise tier work. Main posts/quote-tweets are unaffected. Don't re-enable
+  # on follower growth — account size is not the cause.
+  enabled: false
   dry_run: false               # LIVE (owner call, 2026-06-12) — flip true to pause posting
   max_per_day: 3               # ramp plan: 3 (week 1) -> 6 after quality review
   max_per_run: 1
   min_minutes_between: 45
   author_cooldown_days: 3
-  min_author_followers: 5000
+  # Lowered 5000 -> 1000 (2026-06-15): most >5K accounts restrict who can reply,
+  # so they were un-repliable from this account. The reply_settings filter (only
+  # 'everyone'-repliable posts are targeted) is the real guard now; this floor
+  # just keeps targets reasonably sized.
+  min_author_followers: 1000
   max_target_age_minutes: 180  # matches the 3h collect cadence
   min_topic_fit: 0.45
   min_teaching: 0.2            # lighter than the QT bar — we're adding value, not curating
