@@ -171,6 +171,12 @@ replies:
   # engaged by the author...". No code fix revives this; only manual replies or
   # Enterprise tier work. Main posts/quote-tweets are unaffected. Don't re-enable
   # on follower growth — account size is not the cause.
+  #
+  # LIVE PATH instead: `xbot reply-queue [--fresh]` — the human-in-the-loop
+  # machine. The bot selects targets + drafts replies (reusing the keys below:
+  # min_*, max_target_age_minutes, max_reply_chars, model); YOU post them
+  # manually within the velocity window. Drafting is deferred to the session, so
+  # tokens are spent only on drafts you actually review (~$0.003 each, Sonnet).
   enabled: false
   dry_run: false               # LIVE (owner call, 2026-06-12) — flip true to pause posting
   max_per_day: 3               # ramp plan: 3 (week 1) -> 6 after quality review

@@ -273,3 +273,65 @@ def test_run_log_records_replied(tmp_path):
     orch.reply_scan()
     days = repo.daily_run_totals(1)
     assert days[0]["replied"] == 1
+
+
+# ---------------- human-in-the-loop reply queue ----------------
+
+def test_require_open_replies_param(tmp_path):
+    repo = _repo()
+    _seed(repo, _post("unk1", handle="unk", reply_settings=None))
+    posts = repo.recent_posts(72)
+    # autonomous default: an unknown (not-yet-fetched) setting is excluded
+    strict, _ = select_reply_targets(posts, _cfg(tmp_path), repo)
+    assert strict == []
+    # manual session: unknown allowed through (owner decides in the UI)
+    loose, _ = select_reply_targets(posts, _cfg(tmp_path), repo,
+                                    require_open_replies=False)
+    assert [t.tweet_id for t in loose] == ["unk1"]
+
+
+def test_reply_queue_targets_allows_unknown_but_not_restricted(tmp_path):
+    repo = _repo()
+    _seed(repo, _post("open1", reply_settings="everyone"))
+    _seed(repo, _post("unk1", handle="unk", reply_settings=None))
+    _seed(repo, _post("restr1", handle="restr", reply_settings="following"))
+    orch = _orch(tmp_path, repo)
+    ids = {t.tweet_id for t in orch.reply_queue_targets()}
+    assert ids == {"open1", "unk1"}          # known-restricted excluded
+
+
+def test_reply_queue_targets_respects_limit_and_rank(tmp_path):
+    repo = _repo()
+    _seed(repo, _post("a", handle="h1", followers=8000, age_minutes=20))
+    _seed(repo, _post("b", handle="h2", followers=500000, age_minutes=20))
+    orch = _orch(tmp_path, repo)
+    assert [t.tweet_id for t in orch.reply_queue_targets(limit=1)] == ["b"]
+
+
+def test_draft_reply_returns_vetted_text(tmp_path):
+    repo = _repo()
+    _seed(repo, _post("t1"))
+    orch = _orch(tmp_path, repo, gen=_FakeReplyGen())
+    text, model = orch.draft_reply(repo.get_post("t1"))
+    assert text == GOOD_REPLY
+    assert model == "fake:model"
+
+
+def test_draft_reply_skip_returns_none_and_blocks_target(tmp_path):
+    repo = _repo()
+    _seed(repo, _post("t1"))
+    orch = _orch(tmp_path, repo, gen=_FakeReplyGen(["SKIP: nothing to add"]))
+    text, _ = orch.draft_reply(repo.get_post("t1"))
+    assert text is None
+    assert repo.has_replied("t1")            # logged blocked → never reappears
+
+
+def test_draft_reply_no_generator_returns_none(tmp_path, monkeypatch):
+    for k in ("GROQ_API_KEY", "XAI_API_KEY", "GEMINI_API_KEY",
+              "ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
+        monkeypatch.delenv(k, raising=False)      # no provider key → no generator
+    repo = _repo()
+    _seed(repo, _post("t1"))
+    orch = _orch(tmp_path, repo)                  # no generator attached
+    text, model = orch.draft_reply(repo.get_post("t1"))
+    assert text is None and model == "no_llm"

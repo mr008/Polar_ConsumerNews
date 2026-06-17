@@ -7,7 +7,8 @@
     xbot review        # manually approve/reject pending drafts (interactive)
     xbot publish       # post due items (auto mode) or report what's awaiting review
     xbot run           # collect -> draft -> publish (the full collector pass)
-    xbot reply-scan    # auto-reply engine: reply to 0-1 fresh post from the feed
+    xbot reply-scan    # auto-reply engine (DISABLED — blocked by X Feb-2026 policy)
+    xbot reply-queue   # human-in-the-loop: bot drafts replies, you post them manually
     xbot snapshot      # record today's follower count (once per PT day)
     xbot report        # daily summary
 """
@@ -153,6 +154,151 @@ def cmd_reply_scan(args):
     print(f"reply-scan [{mode}]: {result}")
 
 
+def _wrap(text: str, width: int = 62) -> list[str]:
+    import textwrap
+    out: list[str] = []
+    for para in ((text or "").splitlines() or [""]):
+        out.extend(textwrap.wrap(para, width) or [""])
+    return out
+
+
+def _open_in_browser(url: str) -> bool:
+    import webbrowser
+    try:
+        return webbrowser.open(url)
+    except Exception:
+        return False
+
+
+def _copy_to_clipboard(text: str) -> bool:
+    """Best-effort. pyperclip if installed (cross-platform); else PowerShell
+    Set-Clipboard, which is UTF-16 native and survives the bot's `— • ✓` that
+    the cp1252 console chokes on. Falls back to False so the caller can tell the
+    user to copy the on-screen draft by hand."""
+    try:
+        import pyperclip  # optional extra
+        pyperclip.copy(text)
+        return True
+    except Exception:
+        pass
+    import os
+    import subprocess
+    import tempfile
+    path = None
+    try:
+        with tempfile.NamedTemporaryFile("w", suffix=".txt", encoding="utf-8",
+                                         delete=False) as f:
+            f.write(text)
+            path = f.name
+        subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             "Set-Clipboard -Value ((Get-Content -Raw -Encoding UTF8 "
+             f"-LiteralPath '{path}').TrimEnd())"],
+            check=True, capture_output=True, timeout=15,
+        )
+        return True
+    except Exception:
+        return False
+    finally:
+        if path:
+            try:
+                os.unlink(path)
+            except Exception:
+                pass
+
+
+def cmd_reply_queue(args):
+    """Human-in-the-loop reply machine. Programmatic replies are blocked by X's
+    Feb-2026 policy, so the bot finds targets + drafts replies and the OWNER
+    posts them manually within the velocity window. Local + interactive only —
+    never runs in CI."""
+    orch = _setup(args)
+    from .commentary.reply import get_reply_generator
+    gen = getattr(orch, "reply_generator", None) or get_reply_generator(orch.cfg)
+    if gen is None:
+        print("No LLM key found — set GROQ_API_KEY (free) or another provider in .env.")
+        return
+    if args.fresh:
+        print("Pulling a fresh home-feed read …")
+        try:
+            print(f"  +{orch.collect()} posts collected.")
+        except Exception as e:
+            print(f"  collect failed ({type(e).__name__}: {e}) — using stored posts.")
+
+    targets = orch.reply_queue_targets(limit=args.limit)
+    if not targets:
+        print("No eligible reply targets right now.")
+        if not args.fresh:
+            print("Tip: `xbot reply-queue --fresh` pulls the latest posts (and their reply settings).")
+        return
+
+    interactive = sys.stdin.isatty()
+    print(f"\n═══ REPLY SESSION — {len(targets)} candidate(s) ═══")
+    if not interactive:
+        print("(non-interactive shell — drafts listed only; run in a real terminal to act)")
+    posted = skipped = shown = 0
+    for i, post in enumerate(targets, 1):
+        text, model = orch.draft_reply(post, gen)
+        if not text:
+            continue  # SKIP/low-material — logged blocked, won't reappear
+        shown += 1
+        age_min = post.age_hours * 60
+        window = "FRESH" if age_min <= 30 else "ok" if age_min <= 90 else "LATE"
+        url = post.url or f"https://x.com/{post.author_handle}/status/{post.tweet_id}"
+        print("\n" + "─" * 66)
+        print(f"[{i}/{len(targets)}] @{post.author_handle} · "
+              f"{post.author_follower_count:,} followers · {age_min:.0f} min old · [{window}]")
+        print("  their post:")
+        for ln in _wrap(post.text):
+            print("    " + ln)
+        print("  your draft reply:")
+        for ln in _wrap(text):
+            print("  » " + ln)
+        if not interactive:
+            print(f"  → {url}")
+            continue
+
+        choice = input("  [p]ost · [e]dit · [o]pen · [s]kip · [q]uit > ").strip().lower()
+        if choice == "q":
+            break
+        if choice == "o":
+            _open_in_browser(url)
+            choice = input("  [p]ost · [e]dit · [s]kip · [q]uit > ").strip().lower()
+            if choice == "q":
+                break
+        if choice == "e":
+            edited = input("  new reply text > ").strip()
+            if edited:
+                text = edited
+        if choice in ("p", "e"):
+            copied = _copy_to_clipboard(text)
+            _open_in_browser(url)
+            print("  ✓ reply on clipboard — paste (Ctrl+V) on X, then Reply."
+                  if copied else "  (clipboard unavailable — copy the draft text above)")
+            done = input("    [enter]=posted · paste the reply URL · [s]=didn't post > ").strip()
+            if done.lower() == "s":
+                orch.repo.log_reply(post.tweet_id, post.author_handle, post.text,
+                                    text, model, "skipped", "owner_passed_after_open")
+                skipped += 1
+                print("  skipped")
+            else:
+                our = done.rstrip("/").split("/")[-1].split("?")[0] if done.startswith("http") else ""
+                orch.repo.log_reply(post.tweet_id, post.author_handle, post.text,
+                                    text, model, "posted", "manual", our)
+                posted += 1
+                print(f"  ✓ logged as posted ({posted} this session)")
+        elif choice == "s":
+            orch.repo.log_reply(post.tweet_id, post.author_handle, post.text,
+                                text, model, "skipped", "owner_passed")
+            skipped += 1
+            print("  skipped")
+
+    if shown == 0:
+        print("\nAll candidates were low-material (nothing genuine to add). Try later or --fresh.")
+    else:
+        print(f"\nSession done — {posted} posted, {skipped} skipped.")
+
+
 def cmd_snapshot(args):
     orch = _setup(args)
     print("snapshot:", orch.snapshot())
@@ -260,6 +406,12 @@ def main(argv=None):
     sub.add_parser("publish").set_defaults(func=cmd_publish)
     sub.add_parser("run").set_defaults(func=cmd_run)
     sub.add_parser("reply-scan").set_defaults(func=cmd_reply_scan)
+    p_rq = sub.add_parser("reply-queue")
+    p_rq.add_argument("--fresh", action="store_true",
+                      help="pull a fresh home-feed read first, so targets are minutes old")
+    p_rq.add_argument("--limit", type=int, default=15,
+                      help="max candidates to walk through (default 15)")
+    p_rq.set_defaults(func=cmd_reply_queue)
     sub.add_parser("snapshot").set_defaults(func=cmd_snapshot)
     sub.add_parser("report").set_defaults(func=cmd_report)
 

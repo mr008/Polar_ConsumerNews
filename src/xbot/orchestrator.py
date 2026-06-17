@@ -479,6 +479,34 @@ class Orchestrator:
                             text, model, "blocked", notes)
         return None, model
 
+    # ---------- human-in-the-loop reply queue ----------
+    def reply_queue_targets(self, fresh: bool = False, limit: int = 15) -> list[Post]:
+        """Eligible reply targets for the MANUAL session (`xbot reply-queue`),
+        ranked big-and-fresh-first. Pure selection — no LLM, no posting; drafting
+        is deferred to the session so tokens are only spent on what the owner
+        reviews. Programmatic replies are dead (X Feb-2026 policy) so this feeds a
+        human who posts manually; unknown reply_settings are allowed through."""
+        from .select.reply_targets import select_reply_targets
+        if fresh:
+            self.collect()
+        window_h = float(self.cfg.get("replies.max_target_age_minutes", 180)) / 60.0
+        posts = self.repo.recent_posts(within_hours=window_h)
+        own_handle = self.repo.get_state("own_handle", "")
+        targets, _ = select_reply_targets(posts, self.cfg, self.repo, own_handle,
+                                          require_open_replies=False)
+        return targets[: max(1, limit)]
+
+    def draft_reply(self, post: Post, gen=None) -> tuple[str | None, str]:
+        """Draft + vet (safety + QA) one reply. Returns (text, model), or
+        (None, model) when the draft is a SKIP or fails the gates — in which case
+        it is logged blocked so the target never reappears. Reuses the autonomous
+        engine's vetting (`_vet_reply`)."""
+        from .commentary.reply import get_reply_generator
+        gen = gen or getattr(self, "reply_generator", None) or get_reply_generator(self.cfg)
+        if gen is None:
+            return None, "no_llm"
+        return self._vet_reply(gen, post)
+
     # ---------- account snapshot (follower trend) ----------
     def snapshot(self) -> dict:
         """Once per PT day, record follower/following counts (~$0.001 read) so

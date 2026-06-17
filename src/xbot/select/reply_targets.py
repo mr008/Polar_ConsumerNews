@@ -22,9 +22,16 @@ def _rank(post: Post) -> float:
     return math.log1p(post.author_follower_count) * math.exp(-post.age_hours / RECENCY_TAU_HOURS)
 
 
-def select_reply_targets(posts: list[Post], cfg: NS, repo,
-                         own_handle: str = "") -> tuple[list[Post], list[tuple[Post, str]]]:
-    """Return (targets ranked best-first, skipped with reasons)."""
+def select_reply_targets(posts: list[Post], cfg: NS, repo, own_handle: str = "",
+                         require_open_replies: bool = True,
+                         ) -> tuple[list[Post], list[tuple[Post, str]]]:
+    """Return (targets ranked best-first, skipped with reasons).
+
+    require_open_replies=True (autonomous default): only "everyone"-repliable
+    posts; an unknown (not-yet-fetched) setting is treated as restricted.
+    False (manual `xbot reply-queue` session): unknown settings pass through —
+    the owner simply skips in the X UI if a reply turns out to be blocked; only
+    KNOWN-restricted conversations are dropped."""
     max_age_min = float(cfg.get("replies.max_target_age_minutes", 180))
     min_followers = int(cfg.get("replies.min_author_followers", 5000))
     min_topic = float(cfg.get("replies.min_topic_fit", 0.45))
@@ -53,12 +60,16 @@ def select_reply_targets(posts: list[Post], cfg: NS, repo,
             skip(p, "own_post"); continue
         if p.author_handle.lower() in exclude:
             skip(p, "excluded_author"); continue
-        # X reply controls: a non-"everyone" conversation (or one whose setting we
-        # haven't fetched yet) refuses replies from a non-following/unverified
-        # account with a 403. Skip those BEFORE we spend an LLM call drafting a
-        # reply that can never post. (reply_settings comes free from collect.)
-        if (p.reply_settings or "").lower() != "everyone":
-            skip(p, f"reply_restricted:{p.reply_settings or 'unknown'}"); continue
+        # X reply controls. For the autonomous engine, a non-"everyone" (or
+        # unknown) conversation 403s, so skip it before spending an LLM call.
+        # For the manual session we let unknowns through (the human decides in
+        # the UI) and drop only conversations we KNOW restrict replies.
+        rs = (p.reply_settings or "").lower()
+        if require_open_replies:
+            if rs != "everyone":
+                skip(p, f"reply_restricted:{p.reply_settings or 'unknown'}"); continue
+        elif rs and rs != "everyone":
+            skip(p, f"reply_restricted:{p.reply_settings}"); continue
         if p.author_follower_count < min_followers:
             skip(p, f"small_author:{p.author_follower_count}"); continue
         ok, reason = classify_source(p, cfg)
