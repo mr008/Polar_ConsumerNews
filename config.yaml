@@ -26,10 +26,12 @@ scoping:
   # to 4000 once July's budget resets (the new month starts the count at 0).
   monthly_read_budget: 5500
   # Re-poll live engagement for the queue + top candidates each scoring pass
-  # (PAID: ~$0.005 each, NOT since_id-deduped — re-read every run). At 5 × 4
-  # runs/day ≈ 20 reads/day. Keeps the engagement leg of ranking live; since_id
-  # collection never refreshes metrics on its own. 0 = off.
-  metrics_refresh_top: 5
+  # (PAID: ~$0.005 each, NOT since_id-deduped, NOT covered by the circuit breaker
+  # — so it kept spending while collection was frozen, pushing reads over-cap).
+  # OFF (2026-06-26): teaching value (the primary 65% signal) comes from the LLM
+  # judge, not engagement, so ranking barely moves; saves ~$3/mo + stops the
+  # over-cap creep. Set >0 to re-enable live engagement freshness.
+  metrics_refresh_top: 0
   languages: [en]
 
 ranking:
