@@ -10,6 +10,7 @@
     xbot reply-scan    # auto-reply engine (DISABLED — blocked by X Feb-2026 policy)
     xbot reply-queue   # human-in-the-loop: bot drafts replies, you post them manually
     xbot snapshot      # record today's follower count (once per PT day)
+    xbot list-sync     # build/refresh the curated read-List from author yield (--dry-run to preview)
     xbot report        # daily summary
 """
 from __future__ import annotations
@@ -304,6 +305,33 @@ def cmd_snapshot(args):
     print("snapshot:", orch.snapshot())
 
 
+def cmd_list_sync(args):
+    """Build/refresh the curated read-List (xbot list-sync). --dry-run previews
+    the keep/drop split with no API writes; without it, creates a PRIVATE List (if
+    none configured) and adds keep-authors as members. Following is untouched."""
+    orch = _setup(args)
+    res = orch.sync_keep_list(min_max_qw=args.min_qw, dry_run=args.dry_run)
+    print(f"keep {res['keep_n']} authors · drop {res['drop_n']} "
+          f"(~{res['read_cut_pct']}% of reads, {res['drop_reads']}/{res['total_reads']})")
+    if res["status"] == "dry_run":
+        print("\n[dry run] would keep (read from) these authors:")
+        for h in res["keep_handles"]:
+            print(f"  @{h}")
+        print("\nRun without --dry-run to create/populate the List.")
+        return
+    if res["status"] == "unsupported_source":
+        print("Source is not the live X API (mode.source != api) — cannot manage Lists.")
+        return
+    print(f"\nList {'CREATED' if res['created'] else 'updated'}: id={res['list_id']}")
+    print(f"members added this run: {res['added_n']}" +
+          (f" ({', '.join('@'+h for h in res['added'])})" if res["added"] else ""))
+    if res["unresolved"]:
+        print("could not resolve (skipped): " + ", ".join('@'+h for h in res["unresolved"]))
+    if res["created"]:
+        print(f"\nNEXT: set scoping.list_id: \"{res['list_id']}\" and "
+              f"scoping.source_timeline: list in config.yaml to start reading it.")
+
+
 def _write_cost_per_post(cfg) -> float:
     """Per published item: main post + thread parts at $0.015 each (estimated 1
     part avg) + the $0.20 attribution link reply when enabled. Legacy link mode
@@ -413,6 +441,12 @@ def main(argv=None):
                       help="max candidates to walk through (default 15)")
     p_rq.set_defaults(func=cmd_reply_queue)
     sub.add_parser("snapshot").set_defaults(func=cmd_snapshot)
+    p_ls = sub.add_parser("list-sync")
+    p_ls.add_argument("--min-qw", type=float, default=0.70,
+                      help="keep never-posted authors whose best judge score >= this (default 0.70)")
+    p_ls.add_argument("--dry-run", action="store_true",
+                      help="preview the keep/drop split; no API writes")
+    p_ls.set_defaults(func=cmd_list_sync)
     sub.add_parser("report").set_defaults(func=cmd_report)
 
     args = parser.parse_args(argv)

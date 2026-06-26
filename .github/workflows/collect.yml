@@ -2,12 +2,14 @@ name: collect
 
 # Reads the feed, judges it (Claude), drafts commentary, snapshots the follower
 # count (once/day), and runs the reply engine — all into Turso.
-# Every 3h: since_id read-dedup means the SAME total posts are read per month as
-# the old 6h cadence (each run only pays for posts newer than the last one
-# stored) — fresher targets for the reply engine at no extra read cost.
+# Cadence is 6h (4 runs/day). The earlier 3h bump was justified only by "fresher
+# targets for the reply engine" — but that engine is 403-dead (X Feb-2026 policy),
+# so the justification is gone. And 3h was NOT read-neutral: the draft step's
+# metrics-refresh (scoping.metrics_refresh_top) re-polls live engagement EVERY run
+# and is NOT since_id-deduped, so 8 runs/day doubled that spend vs 4. Keep at 6h.
 on:
   schedule:
-    - cron: "0 */3 * * *"     # every 3 hours
+    - cron: "0 */6 * * *"     # every 6 hours (4 runs/day)
   workflow_dispatch: {}
 
 jobs:

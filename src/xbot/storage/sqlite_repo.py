@@ -419,6 +419,23 @@ class SqliteRepository:
         ).fetchone()
         return r["c"]
 
+    def author_yield(self) -> list[dict]:
+        """Per-author funnel over all stored posts: reads (posts seen), best judge
+        score, and posts published. Drives `xbot list-sync` (keep = ever-posted or
+        ever-promising) and low-yield review."""
+        rows = self.conn.execute(
+            "SELECT p.author_handle AS handle, COUNT(*) AS reads, "
+            "MAX(s.quote_worthy) AS max_qw, "
+            "SUM(CASE WHEN pl.source_tweet_id IS NOT NULL THEN 1 ELSE 0 END) AS posted "
+            "FROM posts p "
+            "LEFT JOIN scores s ON p.tweet_id = s.tweet_id "
+            "LEFT JOIN posted_log pl ON p.tweet_id = pl.source_tweet_id "
+            "GROUP BY p.author_handle"
+        ).fetchall()
+        return [{"handle": r["handle"], "reads": r["reads"] or 0,
+                 "max_qw": r["max_qw"] or 0.0, "posted": r["posted"] or 0}
+                for r in rows]
+
     def daily_run_totals(self, days: int = 7) -> list[dict]:
         """Per-PT-day totals of the run counters (read/judged/drafted/posted/replied)."""
         cutoff = (utcnow() - timedelta(days=days)).isoformat()

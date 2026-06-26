@@ -7,18 +7,29 @@ mode:
   autonomous: true             # AUTONOMOUS: the publish workflow posts without manual review
 
 scoping:
-  source_timeline: home        # full home timeline — following already curated, no List
+  # home = full home timeline (server-side since_id dedup, pay only for new posts).
+  # list = a curated List (scoping.list_id) — reads ONLY chosen authors without
+  # changing who you follow. The List endpoint has no since_id, so the adapter
+  # dedups client-side (paginate newest-first, stop at the first seen tweet).
+  # Build/refresh the List from yield data with: xbot list-sync
+  source_timeline: home
+  list_id: ""                  # set by `xbot list-sync`; only used when source_timeline=list
+  list_page_size: 25           # List read page size — smaller = less overlap re-pay per run
   # Read ceiling PER COLLECT RUN (4 runs/day). since_id dedup means a run only
   # pays for posts newer than the last one stored, so typical spend per run is
   # "new posts since 6h ago", not the ceiling. ~$0.005/post returned.
   max_posts_per_day: 50
   # CIRCUIT BREAKER: hard cap on paid reads per calendar month (~$20 at 4000).
   # collect refuses to run beyond it and logs why. 0 = disabled.
-  monthly_read_budget: 4000
+  # TEMP bump to 5500 (2026-06-26): the 4000 cap froze collection ~06-25 and the
+  # account stopped posting. 5500 (~$27.50) carries it through 2026-06-30. REVERT
+  # to 4000 once July's budget resets (the new month starts the count at 0).
+  monthly_read_budget: 5500
   # Re-poll live engagement for the queue + top candidates each scoring pass
-  # (PAID: ~$0.005 each — ~$6/mo at 10). Keeps the engagement leg of ranking
-  # live; since_id collection never refreshes metrics on its own. 0 = off.
-  metrics_refresh_top: 10
+  # (PAID: ~$0.005 each, NOT since_id-deduped — re-read every run). At 5 × 4
+  # runs/day ≈ 20 reads/day. Keeps the engagement leg of ranking live; since_id
+  # collection never refreshes metrics on its own. 0 = off.
+  metrics_refresh_top: 5
   languages: [en]
 
 ranking:
@@ -27,6 +38,14 @@ ranking:
   teaching_weight: 0.65
   use_llm_judge: true          # the LLM READS each post and scores real teaching value
   judge_model: "claude-haiku-4-5-20251001"   # Haiku — cheap, high-volume classification
+  # PRE-DRAFT GATE: a cheap Haiku yes/no ("anything to teach in the TEXT?") BEFORE
+  # the Sonnet commentary call. Built + tested, but DISABLED: calibration against
+  # the 27 published posts showed the generator's accept/reject boundary is too
+  # fuzzy for a cheap binary filter — at zero post loss it cuts only ~11% of waste
+  # (~$0.4/mo net), and any stricter setting drops real posts. Flip true only if
+  # you accept some post loss for more saving. FAIL-OPEN: error/ambiguity drafts it.
+  draft_prescreen: false
+  prescreen_model: "claude-haiku-4-5-20251001"   # defaults to judge_model if unset
   # QA GATE: a Haiku editor pass on every draft — rejects meta-commentary
   # ("drop the full thread..."), no-lesson drafts, broken format. One revision
   # attempt before a draft is blocked. Fail-open if the LLM is unavailable.
@@ -188,7 +207,10 @@ replies:
   # 'everyone'-repliable posts are targeted) is the real guard now; this floor
   # just keeps targets reasonably sized.
   min_author_followers: 1000
-  max_target_age_minutes: 180  # matches the 3h collect cadence
+  max_target_age_minutes: 360  # 6h: matches the collect cadence; also the manual
+                               # reply-queue's only age gate (autonomous engine is
+                               # off), so it must span at least one collect interval
+                               # or the bank is always "too old" between runs.
   min_topic_fit: 0.45
   min_teaching: 0.2            # lighter than the QT bar — we're adding value, not curating
   max_reply_chars: 240

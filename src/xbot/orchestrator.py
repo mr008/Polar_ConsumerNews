@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 
-from .commentary import check_commentary, get_generator
+from .commentary import check_commentary, get_generator, get_prescreen
 from .config import NS, kill_switch_active
 from .dedup import author_in_cooldown, is_near_duplicate
 from .ingest import SampleSource
@@ -28,7 +28,14 @@ def make_source(cfg: NS):
                    if not os.environ.get(k)]
         if missing:
             raise SystemExit(f"mode.source=api needs these in .env: {', '.join(missing)}")
-        return ApiSourceAdapter(max_posts_per_day=cfg.get("scoping.max_posts_per_day", 120))
+        # source_timeline=list reads a curated List instead of the home feed
+        # (cuts reads to chosen authors without changing who you follow).
+        list_id = (cfg.get("scoping.list_id", "") or "") \
+            if cfg.get("scoping.source_timeline", "home") == "list" else ""
+        return ApiSourceAdapter(
+            max_posts_per_day=cfg.get("scoping.max_posts_per_day", 120),
+            list_id=list_id,
+            list_page_size=cfg.get("scoping.list_page_size", 25))
     return SampleSource(cfg.get("ops.fixture_path", "fixtures/sample_posts.json"))
 
 
@@ -38,6 +45,7 @@ class Orchestrator:
         self.repo = repo
         self.source = make_source(cfg)
         self.generator = get_generator(cfg)
+        self.prescreen = get_prescreen(cfg)  # cheap pre-draft gate; None = disabled
         self.judge = get_teaching_judge(cfg)
         self.publisher = get_publisher(cfg)
         self.judge_reasons: dict[str, str] = {}
@@ -163,6 +171,24 @@ class Orchestrator:
                 break
             if post.tweet_id in drafted_ids or self.repo.has_posted(post.tweet_id):
                 continue
+
+            # PRE-DRAFT GATE: a cheap model rejects no-material posts (truncated
+            # RTs, teasers, flexes) before the expensive commentary call. ~90% of
+            # eligible posts would SKIP anyway; this moves that to a ~24x cheaper
+            # model. Fail-open (None or YES drafts). A reject is logged as a
+            # blocked draft so it's never re-screened (one-attempt-per-post EVER).
+            prescreen = getattr(self, "prescreen", None)
+            if prescreen is not None and not prescreen.has_material(post):
+                draft = Draft(tweet_id=post.tweet_id, commentary="",
+                              model="prescreen", safety_passed=False,
+                              safety_notes="no_material:prescreen")
+                draft_id = self.repo.add_draft(draft, status="blocked")
+                self.repo.set_candidate(post.tweet_id, "skipped", "no_material:prescreen")
+                created.append({"draft_id": draft_id, "draft": draft, "post": post,
+                                "score": score, "ok": False,
+                                "notes": "no_material:prescreen"})
+                continue
+
             # Adaptive threads: only substantial sources earn the multi-part
             # treatment; the generator still falls back to a single post if it
             # can't extract 3+ concrete steps.
@@ -527,6 +553,51 @@ class Orchestrator:
             self.repo.set_state("own_handle", me["handle"])
         self.repo.set_state("last_snapshot_day", today)
         return {"status": "ok", "day": today, **me}
+
+    # ---------- curated read-List sync ----------
+    def sync_keep_list(self, min_max_qw: float = 0.70, dry_run: bool = False) -> dict:
+        """Build/refresh the curated read-List from author yield, so the bot reads
+        only worthwhile authors WITHOUT changing who you follow. KEEP = authors who
+        ever produced a post OR ever scored teaching >= min_max_qw. Creates a
+        PRIVATE List if scoping.list_id is unset, then adds keep-authors not already
+        members (idempotent — safe to re-run monthly). dry_run returns the plan with
+        no API writes."""
+        rows = self.repo.author_yield()
+        keep = sorted((a for a in rows if a["posted"] > 0 or a["max_qw"] >= min_max_qw),
+                      key=lambda a: (-a["posted"], -a["max_qw"]))
+        handles = [a["handle"] for a in keep if a["handle"]]
+        total_reads = sum(a["reads"] for a in rows)
+        drop_reads = sum(a["reads"] for a in rows
+                         if a["posted"] == 0 and a["max_qw"] < min_max_qw)
+        plan = {"keep_handles": handles, "keep_n": len(handles),
+                "drop_n": len(rows) - len(handles), "total_reads": total_reads,
+                "drop_reads": drop_reads,
+                "read_cut_pct": round(100 * drop_reads / total_reads) if total_reads else 0}
+        if dry_run:
+            return {**plan, "status": "dry_run"}
+        src = self.source
+        if not hasattr(src, "resolve_user_ids"):
+            return {**plan, "status": "unsupported_source"}
+        ids = src.resolve_user_ids(handles)
+        list_id = (self.cfg.get("scoping.list_id", "") or "").strip()
+        created = False
+        if not list_id:
+            list_id = src.create_list(self.cfg.get("scoping.list_name", "xbot feed"),
+                                      private=True)
+            created = True
+        existing = set() if created else src.list_member_ids(list_id)
+        added: list[str] = []
+        for h in handles:
+            uid = ids.get(h.lower())
+            if uid and uid not in existing:
+                try:
+                    src.add_list_member(list_id, uid)
+                    added.append(h)
+                except Exception as e:
+                    print(f"  [list-sync] add @{h} failed: {type(e).__name__}: {e}")
+        return {**plan, "status": "ok", "list_id": list_id, "created": created,
+                "added": added, "added_n": len(added),
+                "unresolved": [h for h in handles if h.lower() not in ids]}
 
     # ---------- report ----------
     def report(self) -> dict:
