@@ -34,6 +34,21 @@ scoping:
   metrics_refresh_top: 0
   languages: [en]
 
+# AUTO-UPDATING read-List. `xbot list-sync` (weekly cron) keeps the List good on
+# its own: a discovery sweep scores accounts you don't yet read, then it PROMOTES
+# consistent teachers and DEMOTES members that drift or go quiet. Changes show in
+# `xbot report`. Your personal follows are never touched. Metric = AVERAGE teaching
+# score (consistency), not a single fluke.
+listsync:
+  recency_days: 30        # only judge accounts on their last-30-day behavior
+  promote_avg: 0.35       # add an account once its avg teaching score clears this
+  demote_avg: 0.25        # drop a member whose recent avg falls below this
+  min_judged: 3           # need at least this many judged posts before deciding
+  flood_judged: 60        # high-volume guard: an account past this many judged posts...
+  flood_avg: 0.45         # ...must clear THIS higher avg, or it's a flooder (excluded)
+  quiet_days: 21          # drop a member with no new post in this many days
+  discovery_limit: 80     # home-feed posts read per weekly discovery sweep
+
 ranking:
   # TEACHING VALUE is primary; engagement is only a secondary sanity-check.
   # quote_score = teaching_weight*teaching + (1-teaching_weight)*engagement, gated by topic.

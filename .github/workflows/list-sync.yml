@@ -1,0 +1,31 @@
+name: list-sync
+
+# Weekly auto-update of the curated read-List: a discovery sweep scores accounts
+# the bot doesn't yet read on the List, then it PROMOTES consistent teachers and
+# DEMOTES members that drifted or went quiet. Changes appear in `xbot report`.
+# Your personal follows are never touched. Tunables live in config.yaml > listsync.
+on:
+  schedule:
+    - cron: "0 14 * * 1"     # Mondays 14:00 UTC (07:00 PT)
+  workflow_dispatch: {}
+
+jobs:
+  list-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -e ".[x,llm,turso]"
+      - name: discovery sweep + promote/demote
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          X_API_KEY: ${{ secrets.X_API_KEY }}
+          X_API_SECRET: ${{ secrets.X_API_SECRET }}
+          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+          X_USER_ID: ${{ secrets.X_USER_ID }}
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+        run: xbot list-sync

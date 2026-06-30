@@ -126,7 +126,13 @@ class ApiSourceAdapter:
                 break
         return posts[:limit]
 
-    # ---------------- List administration (one-time / monthly setup) ----------
+    def fetch_discovery(self, limit: int, since_id: str | None = None) -> list[Post]:
+        """Read the HOME feed regardless of list_id — the auto-updater's discovery
+        sweep, so accounts you don't yet read on the List can still be scored and
+        promoted. Bounded by `limit`; own since_id keeps it cheap."""
+        return self._fetch_home(min(limit, self.max), since_id)
+
+    # ---------------- List administration (auto-update + setup) ---------------
     def resolve_user_ids(self, handles: list[str]) -> dict[str, str]:
         """Map @handles -> numeric user ids (up to 100/call). Cheap owned read."""
         out: dict[str, str] = {}
@@ -148,28 +154,36 @@ class ApiSourceAdapter:
         resp.raise_for_status()
         return resp.json()["data"]["id"]
 
-    def list_member_ids(self, list_id: str) -> set[str]:
+    def list_members(self, list_id: str) -> list[dict]:
+        """Current members as [{id, handle}] — the auto-updater diffs by handle."""
         session = self._session()
-        ids: set[str] = set()
+        out: list[dict] = []
         token = None
         while True:
-            params = {"max_results": 100}
+            params = {"max_results": 100, "user.fields": "username"}
             if token:
                 params["pagination_token"] = token
             resp = session.get(f"{API_BASE}/lists/{list_id}/members",
                                params=params, timeout=30)
             resp.raise_for_status()
             data = resp.json()
-            ids.update(u["id"] for u in data.get("data", []))
+            out.extend({"id": u["id"], "handle": u.get("username", "")}
+                       for u in data.get("data", []))
             token = data.get("meta", {}).get("next_token")
             if not token:
-                return ids
+                return out
 
     def add_list_member(self, list_id: str, user_id: str) -> bool:
         resp = self._session().post(f"{API_BASE}/lists/{list_id}/members",
                                     json={"user_id": user_id}, timeout=30)
         resp.raise_for_status()
         return bool(resp.json().get("data", {}).get("is_member"))
+
+    def remove_list_member(self, list_id: str, user_id: str) -> bool:
+        resp = self._session().delete(f"{API_BASE}/lists/{list_id}/members/{user_id}",
+                                      timeout=30)
+        resp.raise_for_status()
+        return not resp.json().get("data", {}).get("is_member", True)
 
     def fetch_metrics(self, ids: list[str]) -> dict[str, Metrics]:
         """Re-poll public metrics for known tweets so ranking sees live engagement

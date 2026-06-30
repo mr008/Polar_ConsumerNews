@@ -51,26 +51,59 @@ class Orchestrator:
         self.judge_reasons: dict[str, str] = {}
 
     # ---------- collector flow ----------
-    def collect(self) -> int:
-        # Circuit breaker: hard monthly read budget. Protects against API
-        # weirdness (e.g. since_id ignored) silently running up the bill.
+    def _read_budget_ok(self) -> bool:
+        """False (and logs) when the monthly read budget is spent."""
         budget = self.cfg.get("scoping.monthly_read_budget", 0)
-        if budget:
+        if budget and self.repo.reads_this_month() >= budget:
             used = self.repo.reads_this_month()
-            if used >= budget:
-                msg = f"circuit_breaker: {used}/{budget} reads this month — collect skipped"
-                print(f"  [collect] {msg}")
-                self.repo.log_run("collect", read=0, detail=msg)
-                return 0
-        cap = self.cfg.get("scoping.max_posts_per_day", 120)
-        # since_id = read-dedup: only fetch (and pay for) posts newer than the
-        # newest one already in the DB.
-        posts = self.source.fetch_timeline(cap, since_id=self.repo.max_seen_tweet_id())
+            msg = f"circuit_breaker: {used}/{budget} reads this month — skipped"
+            print(f"  [collect] {msg}")
+            self.repo.log_run("collect", read=0, detail=msg)
+            return False
+        return True
+
+    def _store(self, posts) -> None:
         for p in posts:
             self.repo.upsert_post(p)
             if not self.repo.has_posted(p.tweet_id):
                 self.repo.set_candidate(p.tweet_id, "watching")
+
+    def collect(self) -> int:
+        # Circuit breaker: hard monthly read budget (protects against e.g. a
+        # silently-ignored since_id running up the bill).
+        if not self._read_budget_ok():
+            return 0
+        cap = self.cfg.get("scoping.max_posts_per_day", 120)
+        # PER-SOURCE since_id (state). The List and the discovery sweep both write
+        # to the posts table, so a single global max_seen would let one corrupt the
+        # other's dedup. Each read source tracks its own watermark instead.
+        src_key = "list" if self.cfg.get("scoping.source_timeline", "home") == "list" else "home"
+        since = self.repo.get_state(f"since_id:{src_key}", "") or self.repo.max_seen_tweet_id()
+        posts = self.source.fetch_timeline(cap, since_id=since)
+        self._store(posts)
+        if posts:
+            newest = str(max(int(p.tweet_id) for p in posts))
+            self.repo.set_state(f"since_id:{src_key}", newest)
         self.repo.log_run("collect", read=len(posts))  # n paid API reads this run
+        return len(posts)
+
+    def discovery_sweep(self, limit: int | None = None) -> int:
+        """Read a bounded HOME-feed sample (even while the bot reads a List) and
+        judge it, so good accounts you don't yet read can be auto-promoted. Its own
+        since_id keeps it cheap; honours the same read budget."""
+        fetch = getattr(self.source, "fetch_discovery", None)
+        if fetch is None or not self._read_budget_ok():
+            return 0
+        limit = limit or int(self.cfg.get("listsync.discovery_limit", 80))
+        since = self.repo.get_state("since_id:discovery", "") or None
+        posts = fetch(limit, since)
+        self._store(posts)
+        if posts:
+            self.repo.set_state("since_id:discovery",
+                                str(max(int(p.tweet_id) for p in posts)))
+        self.repo.log_run("collect", read=len(posts), detail="discovery sweep")
+        if posts:
+            self.score()  # judge the new posts so they enter author_yield
         return len(posts)
 
     def score(self) -> tuple[list[Post], list[Score]]:
@@ -554,50 +587,104 @@ class Orchestrator:
         self.repo.set_state("last_snapshot_day", today)
         return {"status": "ok", "day": today, **me}
 
-    # ---------- curated read-List sync ----------
-    def sync_keep_list(self, min_max_qw: float = 0.70, dry_run: bool = False) -> dict:
-        """Build/refresh the curated read-List from author yield, so the bot reads
-        only worthwhile authors WITHOUT changing who you follow. KEEP = authors who
-        ever produced a post OR ever scored teaching >= min_max_qw. Creates a
-        PRIVATE List if scoping.list_id is unset, then adds keep-authors not already
-        members (idempotent — safe to re-run monthly). dry_run returns the plan with
-        no API writes."""
-        rows = self.repo.author_yield()
-        keep = sorted((a for a in rows if a["posted"] > 0 or a["max_qw"] >= min_max_qw),
-                      key=lambda a: (-a["posted"], -a["max_qw"]))
-        handles = [a["handle"] for a in keep if a["handle"]]
-        total_reads = sum(a["reads"] for a in rows)
-        drop_reads = sum(a["reads"] for a in rows
-                         if a["posted"] == 0 and a["max_qw"] < min_max_qw)
-        plan = {"keep_handles": handles, "keep_n": len(handles),
-                "drop_n": len(rows) - len(handles), "total_reads": total_reads,
-                "drop_reads": drop_reads,
-                "read_cut_pct": round(100 * drop_reads / total_reads) if total_reads else 0}
-        if dry_run:
-            return {**plan, "status": "dry_run"}
+    # ---------- curated read-List: auto-update ----------
+    def _qualifies(self, r: dict) -> bool:
+        """A consistent teacher: enough judged posts, AVERAGE teaching above the
+        bar, and not a high-volume-low-quality flooder (the @athcanft/@tailopez
+        pattern — posts a flood, occasionally lands one)."""
+        cfg = self.cfg
+        if r["judged"] < int(cfg.get("listsync.min_judged", 3)):
+            return False
+        if (r["judged"] > int(cfg.get("listsync.flood_judged", 60))
+                and r["avg_qw"] < float(cfg.get("listsync.flood_avg", 0.45))):
+            return False
+        return r["avg_qw"] >= float(cfg.get("listsync.promote_avg", 0.35))
+
+    def sync_keep_list(self, apply: bool = False) -> dict:
+        """Auto-update the curated read-List. PROMOTE accounts that teach
+        consistently (avg score over enough recent judged posts); DEMOTE current
+        members that drift below the floor or go quiet. Members with thin recent
+        data get a grace pass. apply=False returns the diff with no API writes;
+        True creates the List if needed, applies adds/removes, and logs the change.
+        Your personal follows are never touched."""
+        from datetime import timedelta
+        from .models import utcnow
+        cfg = self.cfg
+        rows = self.repo.author_yield(within_days=int(cfg.get("listsync.recency_days", 30)))
+        own = (self.repo.get_state("own_handle", "") or "").lstrip("@").lower()
+        y = {r["handle"].lower(): r for r in rows
+             if r["handle"] and r["handle"].lower() != own}
+        qualified = {h for h, r in y.items() if self._qualifies(r)}
+
         src = self.source
-        if not hasattr(src, "resolve_user_ids"):
-            return {**plan, "status": "unsupported_source"}
-        ids = src.resolve_user_ids(handles)
-        list_id = (self.cfg.get("scoping.list_id", "") or "").strip()
+        if not hasattr(src, "list_members"):
+            return {"status": "unsupported_source", "qualified": sorted(qualified)}
+        list_id = (cfg.get("scoping.list_id", "") or "").strip()
         created = False
         if not list_id:
-            list_id = src.create_list(self.cfg.get("scoping.list_name", "xbot feed"),
-                                      private=True)
+            if not apply:
+                return {"status": "no_list", "promote": sorted(qualified), "demote": []}
+            list_id = src.create_list(cfg.get("scoping.list_name", "xbot feed"), private=True)
             created = True
-        existing = set() if created else src.list_member_ids(list_id)
-        added: list[str] = []
-        for h in handles:
-            uid = ids.get(h.lower())
-            if uid and uid not in existing:
-                try:
-                    src.add_list_member(list_id, uid)
-                    added.append(h)
-                except Exception as e:
-                    print(f"  [list-sync] add @{h} failed: {type(e).__name__}: {e}")
-        return {**plan, "status": "ok", "list_id": list_id, "created": created,
-                "added": added, "added_n": len(added),
-                "unresolved": [h for h in handles if h.lower() not in ids]}
+        members = [] if created else src.list_members(list_id)
+        member_handles = {m["handle"].lower(): m for m in members if m.get("handle")}
+
+        promote = sorted(h for h in qualified if h not in member_handles)
+        demote_avg = float(cfg.get("listsync.demote_avg", 0.25))
+        min_judged = int(cfg.get("listsync.min_judged", 3))
+        quiet_cut = (utcnow() - timedelta(days=int(cfg.get("listsync.quiet_days", 21)))).isoformat()
+        # last activity is ALL-TIME (a member silent past the recency window has no
+        # row in the windowed yield, so we'd never see it to demote otherwise).
+        last_seen = {r["handle"].lower(): r["last_post"]
+                     for r in self.repo.author_yield() if r["handle"]}
+        demote = []
+        for h in member_handles:
+            r = y.get(h)
+            lp = last_seen.get(h, "")
+            if r is None and not lp:
+                continue  # never seen at all — grace pass (discovery may be lagging)
+            drifted = bool(r) and (r["judged"] >= min_judged
+                                   and r["avg_qw"] < demote_avg and r["posted"] == 0)
+            quiet = bool(lp) and lp < quiet_cut
+            if drifted or quiet:
+                demote.append(h)
+        demote = sorted(demote)
+
+        diff = {"list_id": list_id, "created": created,
+                "members_n": len(member_handles), "promote": promote, "demote": demote}
+        if not apply:
+            return {**diff, "status": "dry_run"}
+
+        ids = src.resolve_user_ids(promote) if promote else {}
+        added, removed, failed = [], [], []
+        for h in promote:
+            uid = ids.get(h)
+            if not uid:
+                failed.append(h); continue
+            try:
+                src.add_list_member(list_id, uid); added.append(h)
+            except Exception as e:
+                print(f"  [list-sync] add @{h} failed: {type(e).__name__}"); failed.append(h)
+        for h in demote:
+            try:
+                src.remove_list_member(list_id, member_handles[h]["id"]); removed.append(h)
+            except Exception as e:
+                print(f"  [list-sync] remove @{h} failed: {type(e).__name__}")
+        summary = (f"+{len(added)} -{len(removed)}"
+                   + (f" · added {', '.join('@' + a for a in added)}" if added else "")
+                   + (f" · dropped {', '.join('@' + r for r in removed)}" if removed else ""))
+        self.repo.set_state("last_list_sync", summary)
+        self.repo.log_run("list-sync", detail=summary[:200])
+        return {**diff, "status": "ok", "added": added, "removed": removed,
+                "failed": failed, "summary": summary}
+
+    def auto_list_update(self) -> dict:
+        """The weekly job: discovery sweep (score accounts you don't yet read on the
+        List) then apply the promote/demote diff. Hands-off; changes show in report."""
+        swept = self.discovery_sweep()
+        result = self.sync_keep_list(apply=True)
+        result["discovery_posts"] = swept
+        return result
 
     # ---------- report ----------
     def report(self) -> dict:
@@ -609,6 +696,7 @@ class Orchestrator:
             "pending_drafts": len(self.repo.pending_drafts()),
             "watching": len(self.repo.candidates("watching")),
             "skipped": len(self.repo.candidates("skipped")),
+            "list_sync": self.repo.get_state("last_list_sync", ""),
             "activity": {
                 "posted": self.repo.activity_posted(72),
                 "replies": self.repo.activity_replies(72),

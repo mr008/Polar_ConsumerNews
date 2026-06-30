@@ -306,30 +306,36 @@ def cmd_snapshot(args):
 
 
 def cmd_list_sync(args):
-    """Build/refresh the curated read-List (xbot list-sync). --dry-run previews
-    the keep/drop split with no API writes; without it, creates a PRIVATE List (if
-    none configured) and adds keep-authors as members. Following is untouched."""
+    """Auto-update the curated read-List (xbot list-sync). Default: discovery sweep
+    + apply promote/demote (creates a PRIVATE List if none configured). --dry-run
+    shows the diff with no API writes / no discovery read. Following is untouched."""
     orch = _setup(args)
-    res = orch.sync_keep_list(min_max_qw=args.min_qw, dry_run=args.dry_run)
-    print(f"keep {res['keep_n']} authors · drop {res['drop_n']} "
-          f"(~{res['read_cut_pct']}% of reads, {res['drop_reads']}/{res['total_reads']})")
-    if res["status"] == "dry_run":
-        print("\n[dry run] would keep (read from) these authors:")
-        for h in res["keep_handles"]:
-            print(f"  @{h}")
-        print("\nRun without --dry-run to create/populate the List.")
+    if args.dry_run:
+        res = orch.sync_keep_list(apply=False)
+        if res["status"] == "unsupported_source":
+            print("Source is not the live X API (mode.source != api) — cannot manage Lists.")
+            return
+        prom, dem = res.get("promote", []), res.get("demote", [])
+        if res["status"] == "no_list":
+            print(f"No List yet. Would CREATE it and add {len(prom)} accounts:")
+        else:
+            print(f"List {res['list_id']} · {res['members_n']} members")
+        print(f"  PROMOTE ({len(prom)}): " + (", ".join('@' + h for h in prom) or "none"))
+        print(f"  DEMOTE  ({len(dem)}): " + (", ".join('@' + h for h in dem) or "none"))
+        print("\nRun without --dry-run to apply (and sweep your feed for new teachers).")
         return
+    res = orch.auto_list_update()
     if res["status"] == "unsupported_source":
-        print("Source is not the live X API (mode.source != api) — cannot manage Lists.")
+        print("Source is not the live X API — cannot manage Lists.")
         return
-    print(f"\nList {'CREATED' if res['created'] else 'updated'}: id={res['list_id']}")
-    print(f"members added this run: {res['added_n']}" +
-          (f" ({', '.join('@'+h for h in res['added'])})" if res["added"] else ""))
-    if res["unresolved"]:
-        print("could not resolve (skipped): " + ", ".join('@'+h for h in res["unresolved"]))
-    if res["created"]:
-        print(f"\nNEXT: set scoping.list_id: \"{res['list_id']}\" and "
-              f"scoping.source_timeline: list in config.yaml to start reading it.")
+    print(f"discovery sweep: judged {res.get('discovery_posts', 0)} home posts")
+    if res.get("created"):
+        print(f"List CREATED: id={res['list_id']}")
+        print(f"  NEXT: set scoping.list_id: \"{res['list_id']}\" and "
+              f"scoping.source_timeline: list in config.yaml to read it.")
+    print(f"applied: {res.get('summary') or '(no changes)'}")
+    if res.get("failed"):
+        print("could not resolve (skipped): " + ", ".join('@' + h for h in res["failed"]))
 
 
 def _write_cost_per_post(cfg) -> float:
@@ -352,9 +358,12 @@ def cmd_report(args):
     orch = _setup(args)
     r = orch.report()
     activity = r.pop("activity", {})
+    list_sync = r.pop("list_sync", "")
     print("Daily report")
     for k, v in r.items():
         print(f"  {k:<16} {v}")
+    if list_sync:
+        print(f"  last List update  {list_sync}")
 
     followers = activity.get("followers", [])
     if followers:
@@ -442,10 +451,8 @@ def main(argv=None):
     p_rq.set_defaults(func=cmd_reply_queue)
     sub.add_parser("snapshot").set_defaults(func=cmd_snapshot)
     p_ls = sub.add_parser("list-sync")
-    p_ls.add_argument("--min-qw", type=float, default=0.70,
-                      help="keep never-posted authors whose best judge score >= this (default 0.70)")
     p_ls.add_argument("--dry-run", action="store_true",
-                      help="preview the keep/drop split; no API writes")
+                      help="show the promote/demote diff; no API writes, no discovery read")
     p_ls.set_defaults(func=cmd_list_sync)
     sub.add_parser("report").set_defaults(func=cmd_report)
 

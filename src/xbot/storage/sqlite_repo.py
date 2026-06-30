@@ -419,22 +419,33 @@ class SqliteRepository:
         ).fetchone()
         return r["c"]
 
-    def author_yield(self) -> list[dict]:
-        """Per-author funnel over all stored posts: reads (posts seen), best judge
-        score, and posts published. Drives `xbot list-sync` (keep = ever-posted or
-        ever-promising) and low-yield review."""
+    def author_yield(self, within_days: int | None = None) -> list[dict]:
+        """Per-author funnel. AVERAGE teaching score (consistency) is the signal
+        that matters for the curated read-List — `max_qw` rewards a single fluke,
+        `avg_qw` rewards reliable teachers. Also returns judged count (enough
+        signal?), last_post (went quiet?), and posts published. `within_days`
+        windows it to recent activity so the auto-updater reacts to drift."""
+        where, params = "", ()
+        if within_days:
+            cutoff = (utcnow() - timedelta(days=within_days)).isoformat()
+            where, params = "WHERE p.created_at >= ?", (cutoff,)
         rows = self.conn.execute(
             "SELECT p.author_handle AS handle, COUNT(*) AS reads, "
+            "SUM(CASE WHEN s.judged = 1 THEN 1 ELSE 0 END) AS judged, "
+            "AVG(CASE WHEN s.judged = 1 THEN s.quote_worthy END) AS avg_qw, "
             "MAX(s.quote_worthy) AS max_qw, "
+            "MAX(p.created_at) AS last_post, "
             "SUM(CASE WHEN pl.source_tweet_id IS NOT NULL THEN 1 ELSE 0 END) AS posted "
             "FROM posts p "
             "LEFT JOIN scores s ON p.tweet_id = s.tweet_id "
             "LEFT JOIN posted_log pl ON p.tweet_id = pl.source_tweet_id "
-            "GROUP BY p.author_handle"
+            f"{where} "
+            "GROUP BY p.author_handle", params
         ).fetchall()
         return [{"handle": r["handle"], "reads": r["reads"] or 0,
-                 "max_qw": r["max_qw"] or 0.0, "posted": r["posted"] or 0}
-                for r in rows]
+                 "judged": r["judged"] or 0, "avg_qw": r["avg_qw"] or 0.0,
+                 "max_qw": r["max_qw"] or 0.0, "last_post": r["last_post"] or "",
+                 "posted": r["posted"] or 0} for r in rows]
 
     def daily_run_totals(self, days: int = 7) -> list[dict]:
         """Per-PT-day totals of the run counters (read/judged/drafted/posted/replied)."""
