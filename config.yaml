@@ -12,8 +12,8 @@ scoping:
   # changing who you follow. The List endpoint has no since_id, so the adapter
   # dedups client-side (paginate newest-first, stop at the first seen tweet).
   # Build/refresh the List from yield data with: xbot list-sync
-  source_timeline: home
-  list_id: ""                  # set by `xbot list-sync`; only used when source_timeline=list
+  source_timeline: list       # reads the curated teacher List (xbot list-sync), not the home feed
+  list_id: "2072060794150494429"   # private "xbot feed" List; auto-updated weekly
   list_page_size: 25           # List read page size — smaller = less overlap re-pay per run
   # Read ceiling PER COLLECT RUN (4 runs/day). since_id dedup means a run only
   # pays for posts newer than the last one stored, so typical spend per run is
