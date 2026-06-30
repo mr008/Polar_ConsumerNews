@@ -87,21 +87,26 @@ class Orchestrator:
         self.repo.log_run("collect", read=len(posts))  # n paid API reads this run
         return len(posts)
 
-    def discovery_sweep(self, limit: int | None = None) -> int:
-        """Read a bounded HOME-feed sample (even while the bot reads a List) and
-        judge it, so good accounts you don't yet read can be auto-promoted. Its own
-        since_id keeps it cheap; honours the same read budget."""
+    def discovery_sweep(self) -> int:
+        """Author-fair HOME-feed sample (even while the bot reads a List) so good
+        accounts you don't yet read can be auto-promoted. The window is N DISTINCT
+        accounts (config), not a raw post count, so a flooder can't dominate. Its
+        own since_id keeps it cheap; honours the read budget. Returns kept count."""
         fetch = getattr(self.source, "fetch_discovery", None)
         if fetch is None or not self._read_budget_ok():
             return 0
-        limit = limit or int(self.cfg.get("listsync.discovery_limit", 80))
+        cfg = self.cfg
         since = self.repo.get_state("since_id:discovery", "") or None
-        posts = fetch(limit, since)
+        posts, n_read = fetch(
+            target_authors=int(cfg.get("listsync.discovery_authors", 50)),
+            per_author_cap=int(cfg.get("listsync.discovery_per_author", 2)),
+            max_reads=int(cfg.get("listsync.discovery_max_reads", 250)),
+            since_id=since)
         self._store(posts)
         if posts:
             self.repo.set_state("since_id:discovery",
                                 str(max(int(p.tweet_id) for p in posts)))
-        self.repo.log_run("collect", read=len(posts), detail="discovery sweep")
+        self.repo.log_run("collect", read=n_read, detail="discovery sweep")  # billed reads
         if posts:
             self.score()  # judge the new posts so they enter author_yield
         return len(posts)

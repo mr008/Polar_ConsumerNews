@@ -126,11 +126,46 @@ class ApiSourceAdapter:
                 break
         return posts[:limit]
 
-    def fetch_discovery(self, limit: int, since_id: str | None = None) -> list[Post]:
-        """Read the HOME feed regardless of list_id — the auto-updater's discovery
-        sweep, so accounts you don't yet read on the List can still be scored and
-        promoted. Bounded by `limit`; own since_id keeps it cheap."""
-        return self._fetch_home(min(limit, self.max), since_id)
+    def fetch_discovery(self, target_authors: int = 50, per_author_cap: int = 2,
+                        max_reads: int = 250, since_id: str | None = None
+                        ) -> tuple[list[Post], int]:
+        """Author-FAIR home-feed sample for discovery (so accounts you don't yet
+        read on the List can be scored + promoted). Pages newest-first but keeps at
+        most `per_author_cap` posts per author, so one flooder can't dominate — the
+        "window" is `target_authors` DISTINCT accounts, not a raw post count. Stops
+        at target_authors covered OR max_reads posts read. Returns (kept, n_read):
+        n_read is the BILLED count (every post a page returns, kept or not), so the
+        breaker tracks true spend. The cap shrinks what we JUDGE, not what we pay."""
+        session = self._session()
+        url = f"{API_BASE}/users/{self.uid}/timelines/reverse_chronological"
+        params = {"max_results": 100, **_FIELDS}
+        if since_id:
+            params["since_id"] = since_id
+        kept: list[Post] = []
+        per_author: dict[str, int] = {}
+        read, token, pages = 0, None, 0
+        while pages < 15 and read < max_reads and len(per_author) < target_authors:
+            if token:
+                params["pagination_token"] = token
+            else:
+                params.pop("pagination_token", None)
+            resp = session.get(url, params=params, timeout=30)
+            resp.raise_for_status()
+            data = resp.json()
+            users = {u["id"]: u for u in data.get("includes", {}).get("users", [])}
+            batch = data.get("data", [])
+            read += len(batch)                  # billed for the whole page
+            for t in batch:
+                post = self._to_post(t, users)
+                h = post.author_handle.lower()
+                if per_author.get(h, 0) < per_author_cap:   # keep-cap is per author
+                    kept.append(post)
+                    per_author[h] = per_author.get(h, 0) + 1
+            token = data.get("meta", {}).get("next_token")
+            pages += 1
+            if not token:
+                break
+        return kept, read
 
     # ---------------- List administration (auto-update + setup) ---------------
     def resolve_user_ids(self, handles: list[str]) -> dict[str, str]:

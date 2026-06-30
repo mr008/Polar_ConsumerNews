@@ -47,7 +47,12 @@ listsync:
   flood_judged: 60        # high-volume guard: an account past this many judged posts...
   flood_avg: 0.45         # ...must clear THIS higher avg, or it's a flooder (excluded)
   quiet_days: 21          # drop a member with no new post in this many days
-  discovery_limit: 80     # home-feed posts read per weekly discovery sweep
+  # Discovery sweep window = DISTINCT accounts to cover (author-fair: <=2 posts
+  # kept per author, so one flooder can't hijack the sample). Bigger window =
+  # more candidates judged = List grows faster. max_reads is the hard cost ceiling.
+  discovery_authors: 50       # distinct accounts to cover per weekly sweep
+  discovery_per_author: 2     # cap posts kept per account (flooder guard)
+  discovery_max_reads: 250    # hard ceiling on posts READ per sweep (~$1.25/wk cap)
 
 ranking:
   # TEACHING VALUE is primary; engagement is only a secondary sanity-check.

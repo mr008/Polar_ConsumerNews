@@ -63,6 +63,46 @@ def test_home_path_when_no_list_id(monkeypatch):
     assert "since_id" not in fake.calls[0]  # home, no since_id this run
 
 
+# ---------------- author-fair discovery sweep ----------------
+
+def _payload_multi(items, next_token=None):
+    """items: list of (id, author_handle)."""
+    users, data = {}, []
+    for tid, h in items:
+        uid = "u_" + h
+        users[uid] = {"id": uid, "username": h, "name": h,
+                      "public_metrics": {"followers_count": 10}}
+        data.append({"id": str(tid), "text": f"p{tid}", "author_id": uid,
+                     "created_at": "2026-06-30T00:00:00Z", "public_metrics": {}})
+    p = {"data": data, "includes": {"users": list(users.values())}}
+    if next_token:
+        p["meta"] = {"next_token": next_token}
+    return p
+
+
+def test_discovery_flooder_cannot_dominate(monkeypatch):
+    # one page: a flooder owns 10 of 12 posts, two others own 1 each
+    items = [(100 - i, "flood") for i in range(10)] + [(5, "alice"), (4, "bob")]
+    a, _ = _adapter(monkeypatch, pages={None: _payload_multi(items)})
+    kept, n_read = a.fetch_discovery(target_authors=10, per_author_cap=2, max_reads=100)
+    by = {}
+    for p in kept:
+        by[p.author_handle] = by.get(p.author_handle, 0) + 1
+    assert by.get("flood", 0) == 2          # flooder capped at 2 kept
+    assert "alice" in by and "bob" in by    # diverse authors still surface
+    assert n_read == 12                     # BILLED for the whole page, not just kept
+
+
+def test_discovery_stops_at_distinct_target(monkeypatch):
+    # page 1 covers 3 distinct authors; target is 3 -> should not fetch page 2
+    p1 = _payload_multi([(9, "a"), (8, "b"), (7, "c")], next_token="t2")
+    p2 = _payload_multi([(6, "d"), (5, "e")])
+    a, fake = _adapter(monkeypatch, pages={None: p1, "t2": p2})
+    kept, n_read = a.fetch_discovery(target_authors=3, per_author_cap=2, max_reads=999)
+    assert {p.author_handle for p in kept} == {"a", "b", "c"}
+    assert len(fake.calls) == 1             # stopped after covering the target
+
+
 # ---------------- author_yield (drives list-sync) ----------------
 
 def test_author_yield(tmp_path):
