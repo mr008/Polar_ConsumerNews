@@ -191,7 +191,7 @@ voice:
 
 llm:
   provider: anthropic                   # anthropic | groq | xai | gemini | openai | auto
-  commentary_model: "claude-sonnet-4-6"            # Sonnet — the public voice
+  commentary_model: "claude-sonnet-5"              # Sonnet 5 — the public voice (rejects temperature; handled in openai_chat)
   classifier_model: "claude-haiku-4-5-20251001"    # (legacy field; judge_model below is used)
   embeddings_model: "text-embedding-3-small"
   # Target the prompt asks for — deliberately under the real ~250 budget so the
@@ -236,7 +236,7 @@ replies:
   min_topic_fit: 0.45
   min_teaching: 0.2            # lighter than the QT bar — we're adding value, not curating
   max_reply_chars: 240
-  model: "claude-sonnet-4-6"   # the public voice — same as commentary
+  model: "claude-sonnet-5"     # the public voice — same as commentary
   exclude_authors: []
 
 growth:

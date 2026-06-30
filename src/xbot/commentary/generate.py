@@ -32,11 +32,38 @@ PROVIDERS = {
 DEFAULT_MODEL = {
     "groq": "llama-3.3-70b-versatile",
     "xai": "grok-4",
-    "anthropic": "claude-sonnet-4-6",
+    "anthropic": "claude-sonnet-5",
     "gemini": "gemini-2.0-flash",
     "openai": "gpt-4o-mini",
 }
 AUTO_ORDER = ["anthropic", "groq", "xai", "gemini", "openai"]
+
+# The Sonnet-5 / Opus-4.7+ / Fable-5 generation REJECTS sampling params
+# (`temperature` 400s: "deprecated for this model"). Drop it for those, and
+# retry-without on any future model that does the same.
+_NO_SAMPLING = ("sonnet-5", "opus-4-7", "opus-4-8", "fable-5", "mythos-5")
+
+
+def _omit_temperature(model: str) -> bool:
+    m = (model or "").lower()
+    return any(tag in m for tag in _NO_SAMPLING)
+
+
+def openai_chat(client, *, model: str, messages: list, max_tokens: int,
+                temperature=None):
+    """chat.completions.create that adapts to models which reject `temperature`.
+    Drops it for known new-gen models; for anything not yet listed, retries
+    without it on a 'temperature'-related 400 so a new model never breaks us."""
+    kwargs = dict(model=model, max_tokens=max_tokens, messages=messages)
+    if temperature is not None and not _omit_temperature(model):
+        kwargs["temperature"] = temperature
+    try:
+        return client.chat.completions.create(**kwargs)
+    except Exception as e:
+        if "temperature" in kwargs and "temperature" in str(e).lower():
+            kwargs.pop("temperature")
+            return client.chat.completions.create(**kwargs)
+        raise
 
 
 class CommentaryGenerator(Protocol):
@@ -212,11 +239,8 @@ class OpenAICompatGenerator:
         if self.base_url:
             kwargs["base_url"] = self.base_url
         client = OpenAI(**kwargs)
-        resp = client.chat.completions.create(
-            model=self.model, temperature=self.temperature,
-            max_tokens=900 if allow_thread else 320,
-            messages=messages,
-        )
+        resp = openai_chat(client, model=self.model, temperature=self.temperature,
+                           max_tokens=900 if allow_thread else 320, messages=messages)
         raw = resp.choices[0].message.content.strip()
         hook, parts = split_parts(raw, self.cfg) if allow_thread else (raw, [])
         return Draft(tweet_id=post.tweet_id, commentary=hook, parts=parts,

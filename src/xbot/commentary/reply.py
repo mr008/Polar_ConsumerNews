@@ -12,7 +12,7 @@ import os
 
 from ..config import NS
 from ..models import Post
-from .generate import AUTO_ORDER, DEFAULT_MODEL, PROVIDERS
+from .generate import AUTO_ORDER, DEFAULT_MODEL, PROVIDERS, openai_chat
 
 
 def build_reply_system_prompt(cfg: NS) -> str:
@@ -77,10 +77,8 @@ class ReplyGenerator:
         if PROVIDERS[self.provider]["base_url"]:
             kwargs["base_url"] = PROVIDERS[self.provider]["base_url"]
         client = OpenAI(**kwargs)
-        resp = client.chat.completions.create(
-            model=self.model, temperature=float(self.cfg.get("llm.temperature", 0.7)),
-            max_tokens=200, messages=messages,
-        )
+        resp = openai_chat(client, model=self.model, max_tokens=200, messages=messages,
+                           temperature=float(self.cfg.get("llm.temperature", 0.7)))
         return (resp.choices[0].message.content.strip(),
                 f"{self.provider}:{self.model}")
 
