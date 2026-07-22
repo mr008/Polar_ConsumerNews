@@ -47,6 +47,26 @@ listsync:
   flood_judged: 60        # high-volume guard: an account past this many judged posts...
   flood_avg: 0.45         # ...must clear THIS higher avg, or it's a flooder (excluded)
   quiet_days: 21          # drop a member with no new post in this many days
+
+  # DISCOVERY SOURCE — how NEW candidate accounts get found each weekly sweep.
+  #   web  = search the open web (Brave) for prominent teachers, then vet the new
+  #          handles with a few capped X reads each. Search is FREE; reaches beyond
+  #          your follows; no firehose waste. (default)
+  #   home = author-fair home-feed sample (legacy) — pays to scroll past spam and
+  #          only ever sees accounts you already follow.
+  discovery_mode: web
+  # -- web mode (Brave Search: free tier 2,000 queries/mo; needs SEARCH_API_KEY) --
+  web_provider: brave
+  web_queries:                 # curated, teaching-first — each is one free search
+    - "best AI UGC creators to follow twitter 2026"
+    - "twitter growth playbook thread AI consumer app"
+    - "viral short form content operators to follow x.com"
+    - "top AI app builders to follow on x twitter"
+  web_results_per_query: 20    # search hits scanned per query (Brave max 20; free)
+  web_max_new: 15              # max NEW candidate accounts vetted per week
+  web_vet_posts_per_author: 5  # recent posts read to judge each candidate
+  web_vet_max_reads: 100       # HARD ceiling on billed vetting reads/week (~$0.50)
+  # -- home mode (legacy fallback) --
   # Discovery sweep window = DISTINCT accounts to cover (author-fair: <=2 posts
   # kept per author, so one flooder can't hijack the sample). Bigger window =
   # more candidates judged = List grows faster. max_reads is the hard cost ceiling.

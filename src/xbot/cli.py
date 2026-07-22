@@ -328,7 +328,8 @@ def cmd_list_sync(args):
     if res["status"] == "unsupported_source":
         print("Source is not the live X API — cannot manage Lists.")
         return
-    print(f"discovery sweep: judged {res.get('discovery_posts', 0)} home posts")
+    mode = orch.cfg.get("listsync.discovery_mode", "web")
+    print(f"discovery sweep ({mode}): judged {res.get('discovery_posts', 0)} new posts")
     if res.get("created"):
         print(f"List CREATED: id={res['list_id']}")
         print(f"  NEXT: set scoping.list_id: \"{res['list_id']}\" and "

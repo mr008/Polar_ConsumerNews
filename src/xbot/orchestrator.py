@@ -88,6 +88,76 @@ class Orchestrator:
         return len(posts)
 
     def discovery_sweep(self) -> int:
+        """Find good accounts you don't yet read, so they can be auto-promoted to
+        the List. Two modes (listsync.discovery_mode): `web` (default) searches the
+        open web for prominent teachers — free search, only capped vetting reads are
+        billed, and it reaches beyond your follows; `home` samples the home feed
+        (the legacy fallback, which pays to scroll past spam). Returns kept count."""
+        if self.cfg.get("listsync.discovery_mode", "web") == "web":
+            return self._web_discovery_sweep()
+        return self._home_discovery_sweep()
+
+    def _web_discovery_sweep(self) -> int:
+        """Open-web discovery: a web search surfaces prominent teacher accounts;
+        NEW handles (deduped vs the List + everything already scored) are vetted by
+        reading a few recent posts each — capped by `web_vet_max_reads` — then
+        scored so only consistent teachers get promoted. Search is free; the vetting
+        reads are the only billed part, and they honour the monthly breaker."""
+        src = self.source
+        if not hasattr(src, "fetch_user_recent") or not self._read_budget_ok():
+            return 0
+        api_key = os.environ.get("SEARCH_API_KEY", "")
+        if not api_key:
+            print("  [discovery] SEARCH_API_KEY unset — web discovery skipped")
+            self.repo.log_run("collect", read=0, detail="web discovery: no api key")
+            return 0
+        from .ingest.web_discovery import search_handles
+        cfg = self.cfg
+        handles = search_handles(
+            cfg.get("listsync.web_queries", []) or [], api_key,
+            provider=cfg.get("listsync.web_provider", "brave"),
+            per_query=int(cfg.get("listsync.web_results_per_query", 20)))
+        fresh = [h for h in handles if h not in self._known_authors()]
+        fresh = fresh[:int(cfg.get("listsync.web_max_new", 15))]
+        if not fresh:
+            self.repo.log_run("collect", read=0,
+                              detail=f"web discovery: 0 new of {len(handles)} found")
+            return 0
+        ids = src.resolve_user_ids(fresh)
+        per_author = int(cfg.get("listsync.web_vet_posts_per_author", 5))
+        max_reads = int(cfg.get("listsync.web_vet_max_reads", 100))
+        posts, read = [], 0
+        for h in fresh:
+            uid = ids.get(h)
+            if not uid or read >= max_reads:
+                continue
+            got, n = src.fetch_user_recent(uid, max_posts=per_author)
+            posts.extend(got)
+            read += n
+        self._store(posts)
+        self.repo.log_run("collect", read=read,
+                          detail=f"web discovery: {len(fresh)} candidates, {len(posts)} posts")
+        if posts:
+            self.score()  # judge the new posts so they enter author_yield
+        return len(posts)
+
+    def _known_authors(self) -> set[str]:
+        """Handles we already have signal on — skip re-vetting (and paying for) them:
+        the bot's own account, every author already scored, and current List members."""
+        known = {r["handle"].lower() for r in self.repo.author_yield() if r["handle"]}
+        known.add((self.repo.get_state("own_handle", "") or "").lstrip("@").lower())
+        src = self.source
+        list_id = (self.cfg.get("scoping.list_id", "") or "").strip()
+        if list_id and hasattr(src, "list_members"):
+            try:
+                known.update(m["handle"].lower() for m in src.list_members(list_id)
+                             if m.get("handle"))
+            except Exception as e:
+                print(f"  [discovery] list_members lookup failed: {type(e).__name__}")
+        known.discard("")
+        return known
+
+    def _home_discovery_sweep(self) -> int:
         """Author-fair HOME-feed sample (even while the bot reads a List) so good
         accounts you don't yet read can be auto-promoted. The window is N DISTINCT
         accounts (config), not a raw post count, so a flooder can't dominate. Its

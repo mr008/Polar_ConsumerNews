@@ -167,6 +167,27 @@ class ApiSourceAdapter:
                 break
         return kept, read
 
+    def fetch_user_recent(self, user_id: str, max_posts: int = 5
+                          ) -> tuple[list[Post], int]:
+        """Read one account's most recent original posts — the VETTING read for
+        web discovery (score a candidate found via web search before promoting it).
+        `exclude=retweets,replies` drops RT stubs + reply fragments SERVER-SIDE
+        (lesson: truncated RT teasers poison the judge), and we guard client-side
+        too. Single page, so cost is bounded to <= max_posts. Returns (posts,
+        n_read) — n_read is the BILLED count so the caller can enforce a ceiling."""
+        session = self._session()
+        url = f"{API_BASE}/users/{user_id}/tweets"
+        params = {"max_results": min(100, max(5, max_posts)),
+                  "exclude": "retweets,replies", **_FIELDS}
+        resp = session.get(url, params=params, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+        users = {u["id"]: u for u in data.get("includes", {}).get("users", [])}
+        batch = data.get("data", [])
+        posts = [p for p in (self._to_post(t, users) for t in batch)
+                 if not (p.is_retweet or p.is_reply)]   # belt-and-suspenders
+        return posts[:max_posts], len(batch)
+
     # ---------------- List administration (auto-update + setup) ---------------
     def resolve_user_ids(self, handles: list[str]) -> dict[str, str]:
         """Map @handles -> numeric user ids (up to 100/call). Cheap owned read."""
