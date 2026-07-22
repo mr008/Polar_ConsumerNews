@@ -12,7 +12,7 @@ from .commentary import check_commentary, get_generator, get_prescreen
 from .config import NS, kill_switch_active
 from .dedup import author_in_cooldown, is_near_duplicate
 from .ingest import SampleSource
-from .models import Draft, Post, Score
+from .models import Draft, Post, Score, is_web_source
 from .publish import get_publisher
 from .score import score_posts
 from .score.teaching_judge import get_teaching_judge, prefilter_for_judge
@@ -181,6 +181,46 @@ class Orchestrator:
             self.score()  # judge the new posts so they enter author_yield
         return len(posts)
 
+    def collect_web(self) -> int:
+        """ONLINE CONTENT source: web search finds tactical blog posts, a cheap
+        model summarizes each into a teaching brief, and the briefs enter the same
+        candidate pool as X posts (published as ORIGINAL teaching posts, no quote).
+        Runs on its own light cadence. Free search; only NEW articles cost a small
+        summarize call. No X reads. Returns the number of new candidates stored."""
+        cfg = self.cfg
+        if not cfg.get("webcontent.enabled", False):
+            return 0
+        key = os.environ.get("SEARCH_API_KEY", "")
+        if not key:
+            print("  [web-content] SEARCH_API_KEY unset — skipped")
+            return 0
+        from .ingest.web_articles import (find_article_candidates, summarize_article,
+                                          to_web_post, web_id)
+        cands = find_article_candidates(
+            cfg.get("webcontent.queries", []) or [], key,
+            provider=cfg.get("webcontent.provider", "brave"),
+            per_query=int(cfg.get("webcontent.results_per_query", 15)))
+        cap = int(cfg.get("webcontent.max_new_per_run", 3))
+        min_chars = int(cfg.get("webcontent.min_article_chars", 400))
+        posts, added = [], 0
+        for url, title, blurb in cands:
+            if added >= cap:
+                break
+            wid = web_id(url)
+            if self.repo.has_posted(wid) or self.repo.get_post(wid) is not None:
+                continue                       # already posted or already a candidate
+            brief = summarize_article(title, blurb, url, cfg, min_chars=min_chars)
+            if not brief:                      # SKIP / thin / no key
+                continue
+            posts.append(to_web_post(url, brief))
+            added += 1
+        self._store(posts)
+        self.repo.log_run("collect", read=0, detail=f"web content: +{added} of "
+                          f"{len(cands)} candidates")
+        if posts:
+            self.score()                       # judge them so they enter the ranked pool
+        return added
+
     def score(self) -> tuple[list[Post], list[Score]]:
         posts = self.repo.recent_posts(72)
         self._refresh_reads = self._refresh_metrics(posts)
@@ -231,14 +271,16 @@ class Orchestrator:
         fetch = getattr(getattr(self, "source", None), "fetch_metrics", None)
         if not top_n or fetch is None:
             return 0
-        ids = [p.tweet_id for _, _, p in self.repo.pending_drafts()]
+        # Web-article candidates have no real tweet id — never send them to X.
+        ids = [p.tweet_id for _, _, p in self.repo.pending_drafts()
+               if not p.tweet_id.startswith("web:")]
         def stored_score(p: Post) -> float:
             s = self.repo.get_score(p.tweet_id)
             return s.quote_score if s else 0.0
         for p in sorted(posts, key=stored_score, reverse=True):
             if len(ids) >= top_n:
                 break
-            if p.tweet_id not in ids:
+            if p.tweet_id not in ids and not is_web_source(p):
                 ids.append(p.tweet_id)
         try:
             fresh = fetch(ids[:top_n])
@@ -301,6 +343,7 @@ class Orchestrator:
             # treatment; the generator still falls back to a single post if it
             # can't extract 3+ concrete steps.
             allow_thread = (bool(self.cfg.get("posting.adaptive_threads", False))
+                            and not is_web_source(post)  # web posts publish as one post
                             and score.quote_worthy
                             >= self.cfg.get("posting.thread_min_teaching", 0.75))
             draft = self.generator.generate(post, allow_thread=allow_thread)
@@ -753,12 +796,15 @@ class Orchestrator:
         return {**diff, "status": "ok", "added": added, "removed": removed,
                 "failed": failed, "summary": summary}
 
-    def auto_list_update(self) -> dict:
-        """The weekly job: discovery sweep (score accounts you don't yet read on the
-        List) then apply the promote/demote diff. Hands-off; changes show in report."""
-        swept = self.discovery_sweep()
+    def auto_list_update(self, discover: bool = False) -> dict:
+        """The list-sync job: apply the promote/demote diff (free, from data already
+        read). Account DISCOVERY (billed web-search + vetting) runs ONLY when
+        discover=True — kept manual (`xbot list-sync --discover`) so the weekly cron
+        does cheap List hygiene without auto-spending on new-account vetting."""
+        swept = self.discovery_sweep() if discover else 0
         result = self.sync_keep_list(apply=True)
         result["discovery_posts"] = swept
+        result["discovered"] = discover
         return result
 
     # ---------- report ----------

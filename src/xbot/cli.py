@@ -67,6 +67,13 @@ def cmd_collect(args):
     print(f"✓ collected {n} posts (source={orch.cfg.get('mode.source')})")
 
 
+def cmd_collect_web(args):
+    orch = _setup(args)
+    n = orch.collect_web()
+    print(f"✓ collected {n} web article candidate(s) "
+          f"(enabled={orch.cfg.get('webcontent.enabled', False)})")
+
+
 def cmd_score(args):
     orch = _setup(args)
     posts, scores = orch.score()
@@ -322,14 +329,18 @@ def cmd_list_sync(args):
             print(f"List {res['list_id']} · {res['members_n']} members")
         print(f"  PROMOTE ({len(prom)}): " + (", ".join('@' + h for h in prom) or "none"))
         print(f"  DEMOTE  ({len(dem)}): " + (", ".join('@' + h for h in dem) or "none"))
-        print("\nRun without --dry-run to apply (and sweep your feed for new teachers).")
+        print("\nRun without --dry-run to apply. Add --discover to also search for "
+              "new accounts (billed).")
         return
-    res = orch.auto_list_update()
+    res = orch.auto_list_update(discover=args.discover)
     if res["status"] == "unsupported_source":
         print("Source is not the live X API — cannot manage Lists.")
         return
-    mode = orch.cfg.get("listsync.discovery_mode", "web")
-    print(f"discovery sweep ({mode}): judged {res.get('discovery_posts', 0)} new posts")
+    if args.discover:
+        mode = orch.cfg.get("listsync.discovery_mode", "web")
+        print(f"discovery sweep ({mode}): judged {res.get('discovery_posts', 0)} new posts")
+    else:
+        print("promote/demote only (run with --discover to search for new accounts)")
     if res.get("created"):
         print(f"List CREATED: id={res['list_id']}")
         print(f"  NEXT: set scoping.list_id: \"{res['list_id']}\" and "
@@ -433,6 +444,7 @@ def main(argv=None):
 
     sub.add_parser("initdb").set_defaults(func=cmd_initdb)
     sub.add_parser("collect").set_defaults(func=cmd_collect)
+    sub.add_parser("collect-web").set_defaults(func=cmd_collect_web)
     p_score = sub.add_parser("score")
     p_score.add_argument("--top", type=int, default=10)
     p_score.set_defaults(func=cmd_score)
@@ -454,6 +466,9 @@ def main(argv=None):
     p_ls = sub.add_parser("list-sync")
     p_ls.add_argument("--dry-run", action="store_true",
                       help="show the promote/demote diff; no API writes, no discovery read")
+    p_ls.add_argument("--discover", action="store_true",
+                      help="also search for NEW accounts (billed web-search + vetting); "
+                           "off by default so the weekly cron only does promote/demote")
     p_ls.set_defaults(func=cmd_list_sync)
     sub.add_parser("report").set_defaults(func=cmd_report)
 

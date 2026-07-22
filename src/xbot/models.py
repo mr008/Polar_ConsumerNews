@@ -101,6 +101,17 @@ class Post:
         return cls(metrics=metrics, **kwargs)
 
 
+# Web-article candidates (found via online search, not the X feed) carry this
+# tweet_id prefix so the pipeline can tell them apart: they publish as an ORIGINAL
+# post (no quote, no @handle h/t — the source link goes in the hidden reply).
+WEB_ID_PREFIX = "web:"
+
+
+def is_web_source(post) -> bool:
+    """True for a candidate that came from the online content search, not X."""
+    return str(getattr(post, "tweet_id", "")).startswith(WEB_ID_PREFIX)
+
+
 @dataclass
 class Score:
     tweet_id: str

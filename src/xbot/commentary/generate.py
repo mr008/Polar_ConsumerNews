@@ -16,7 +16,7 @@ import re
 from typing import Protocol
 
 from ..config import NS
-from ..models import Draft, Post
+from ..models import Draft, Post, is_web_source
 
 STEP_RE = re.compile(r"^\s*\d+[\.\)]\s*(.+)$")
 
@@ -80,8 +80,11 @@ def build_system_prompt(cfg: NS) -> str:
 VOICE: {v.style}. Punchy operator energy, NOT a measured curator. Skill-sharing angle: teach the tactic — why it works / the move to steal / the part people miss.
 
 FORMAT: a compact "steal this" breakdown in ONE post (<= {max_chars} characters):
-  - a hook line
-  - 2-4 short bullets (use "•")
+  - HOOK (the first line — it does ~80% of the work; stop the scroll):
+      * Lead with the single most surprising SPECIFIC from the source — a hard number, a concrete result, or a counter-intuitive claim ("$100 test made $80k day one", "distribution beats product").
+      * NO preamble or throat-clearing ("here's how", "a thread on", "let me explain", "the key to"). Open on the payload.
+      * Make it a complete, standalone line — NOT a vague teaser or cliffhanger. The first line must earn the second.
+  - 2-4 short bullets (use "•") — the concrete moves to steal
   - a one-line takeaway
 
 PROTAGONIST: the post is about US (the teacher), not the source author. Do NOT open with their @handle. End with a small "h/t @handle" tail only — use their actual handle from the source.
@@ -115,14 +118,31 @@ def _user_prompt(post: Post, cfg: NS = None, allow_thread: bool = False) -> str:
     if cfg is not None:
         from ..publish.publisher import body_budget, part_budget  # lazy: avoid cycle
         hook_budget = body_budget(post, cfg)
+        # ONE length knob: llm.max_commentary_chars is the target the model aims
+        # for (optimal-length strategy), capped at the hard body budget so it can
+        # never exceed the 280 ceiling. Keeps the system-prompt target and this
+        # per-post instruction consistent (they used to conflict).
+        target = min(int(cfg.get("llm.max_commentary_chars", 240)), hook_budget)
         extra = (f"\nHARD LIMIT for this post: {hook_budget} characters before the "
-                 f"h/t tail — aim for {max(hook_budget - 25, 80)}. If in doubt, cut a bullet.")
+                 f"h/t tail — aim for {target}. If in doubt, cut a bullet.")
         if allow_thread:
             extra += THREAD_INSTRUCTIONS.format(
                 n_parts=int(cfg.get("posting.max_thread_parts", 3)),
                 hook_budget=hook_budget,
                 part_budget=part_budget(cfg),
                 handle=post.author_handle)
+    if is_web_source(post):
+        # Web article: teach the tactic in our own voice. The source is already a
+        # dense brief — TEACH from it, don't re-compress it into a bare summary
+        # (that trips the QA "reads like a summary / no takeaway" gate). No @handle
+        # h/t (we don't tag blogs — a wrong @ would mis-credit); attribution is separate.
+        return (f"Source article ({post.author_name}):\n"
+                f'"""\n{post.text}\n"""\n\n'
+                f"Write the commentary now as a COMPLETE teaching post: a hook, 2-3 "
+                f"bullets, and a clear one-line takeaway on its OWN final line — never "
+                f"skip the takeaway. Teach the tactic in your own words (the source is "
+                f"a brief, not something to compress further). Do NOT add an h/t or "
+                f"@mention.{extra}")
     return (f"Source post by @{post.author_handle} ({post.author_name}):\n"
             f'"""\n{post.text}\n"""\n\n'
             f"Write the commentary now. End with: h/t @{post.author_handle}{extra}")

@@ -26,6 +26,16 @@ def test_extract_handles_urls_mentions_dedup_and_junk():
     assert extract_handles(results) == ["levelsio", "gregisenberg", "dickiebush", "nicolascole77"]
 
 
+def test_extract_handles_drops_generic_site_paths():
+    # x.com/blog, x.com/news etc. are site sections, not accounts.
+    results = [
+        {"url": "https://x.com/blog", "title": "", "description": ""},
+        {"url": "https://twitter.com/news", "title": "", "description": ""},
+        {"url": "https://x.com/rileybrown", "title": "", "description": ""},
+    ]
+    assert extract_handles(results) == ["rileybrown"]
+
+
 def test_extract_handles_empty():
     assert extract_handles([]) == []
     assert extract_handles([{"url": "https://example.com", "title": "no handles here"}]) == []

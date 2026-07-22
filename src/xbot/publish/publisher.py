@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 from typing import Protocol, runtime_checkable
 
-from ..models import Draft, Post
+from ..models import Draft, Post, is_web_source
 
 _HT_TAIL = re.compile(r"\s*h/?t\s+@\w+\s*$", re.IGNORECASE)
 _BULLET = re.compile(r"^\s*(?:•|\d+[\.\)])\s")
@@ -51,6 +51,8 @@ def body_budget(post: Post, cfg) -> int:
     """Max commentary-body chars (h/t tail excluded) for this post in the active
     format. Mention mode keeps the tail inside the 280; link mode also loses the
     URL (23 chars on X)."""
+    if is_web_source(post):
+        return 280 - 2                       # original teaching post, no h/t tail
     fmt = posting_format(cfg)
     if fmt == "link":
         return 280 - (len(f"h/t @{post.author_handle}: ") + 23) - 2
@@ -111,6 +113,14 @@ def compose_text(draft: Draft, post: Post, cfg) -> tuple[str, str]:
         return f"{body}\n\n{attribution}", "link"
     if fmt == "mention":
         text = draft.commentary.strip()
+        if is_web_source(post):
+            # Original teaching post: no @handle h/t (can't reliably resolve a
+            # blog's X handle; a wrong @ would mis-tag someone). Strip any the
+            # model added; attribution, if wanted, is the source reply.
+            text = strip_ht_tail(text)
+            if len(text) > 280:
+                text = smart_trim(text, 278)
+            return text, "mention"
         if not _HT_TAIL.search(text):  # credit tail is part of the voice — ensure it
             text = f"{text}\n\nh/t @{post.author_handle}"
         if len(text) > 280:  # last resort — safety should have caught this

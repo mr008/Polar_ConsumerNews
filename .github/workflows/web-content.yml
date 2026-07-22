@@ -1,0 +1,39 @@
+name: web-content
+
+# ONLINE CONTENT source: twice a day, web search finds tactical blog posts, a cheap
+# model summarizes each into a teaching brief, and the briefs enter the same ranked
+# pool as X posts (published as ORIGINAL teaching posts by the normal publish flow).
+# Free search; only new-article summaries cost (~cents/mo). No X reads. Config lives
+# in config.yaml > webcontent. Finding new X ACCOUNTS is separate + manual.
+on:
+  # NOT SHIPPED YET. To roll out: set webcontent.enabled: true in config.yaml AND
+  # uncomment the schedule below (2x/day). Until then this runs only on manual
+  # dispatch, and collect-web no-ops while webcontent.enabled is false.
+  # schedule:
+  #   - cron: "0 13 * * *"     # ~06:00 PT
+  #   - cron: "0 1 * * *"      # ~18:00 PT
+  workflow_dispatch: {}
+
+jobs:
+  web-content:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -e ".[x,llm,turso]"
+      - name: collect-web -> draft
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SEARCH_API_KEY: ${{ secrets.SEARCH_API_KEY }}
+          X_API_KEY: ${{ secrets.X_API_KEY }}
+          X_API_SECRET: ${{ secrets.X_API_SECRET }}
+          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+          X_USER_ID: ${{ secrets.X_USER_ID }}
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+        run: |
+          xbot collect-web
+          xbot draft

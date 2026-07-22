@@ -57,10 +57,11 @@ listsync:
   discovery_mode: web
   # -- web mode (Brave Search: free tier 2,000 queries/mo; needs SEARCH_API_KEY) --
   web_provider: brave
-  web_queries:                 # curated, teaching-first — each is one free search
+  web_queries:                 # curated, teaching-first — each is one free search.
+    # "top/best <niche> to follow on x/twitter" surfaces the most profile links.
     - "best AI UGC creators to follow twitter 2026"
-    - "twitter growth playbook thread AI consumer app"
-    - "viral short form content operators to follow x.com"
+    - "best growth marketing accounts to follow on x twitter"
+    - "indie hackers building AI apps to follow on x twitter"
     - "top AI app builders to follow on x twitter"
   web_results_per_query: 20    # search hits scanned per query (Brave max 20; free)
   web_max_new: 15              # max NEW candidate accounts vetted per week
@@ -187,6 +188,28 @@ posting:
   # profile timeline. The h/t @handle tail still credits the author.
   attribution_reply: false
 
+# ONLINE CONTENT SOURCE. Web search finds tactical BLOG posts; a cheap model
+# summarizes each into a teaching brief; the briefs enter the SAME ranked pool as
+# X posts and publish as ORIGINAL teaching posts (no quote, no @handle h/t, no
+# link — pure "steal this" tactics in the bot's voice). Runs on its own light
+# cadence (`web-content.yml`, 2x/day) via `xbot collect-web`. Cost: Brave search
+# is FREE; the only spend is one small summarize call per NEW article (~$0.003).
+# No X reads. Needs SEARCH_API_KEY. Finding NEW X ACCOUNTS is separate + MANUAL
+# (`xbot list-sync --discover`) — not scheduled.
+webcontent:
+  enabled: false                 # BUILT + tested, NOT shipped. Flip true to roll out
+                                 # (also uncomment the cron in web-content.yml).
+  provider: brave
+  queries:                       # tactical, teaching-first — each is one free search
+    - "how to make viral AI UGC video ads tactics guide"
+    - "consumer app growth distribution playbook 2026"
+    - "short form video hook writing formula guide"
+    - "build in public growth tactics thread"
+  results_per_query: 15          # search hits scanned per query (free)
+  max_new_per_run: 3             # cap NEW articles summarized per run (cost guard)
+  min_article_chars: 400         # below this, fall back to the search snippet
+  summarize_model: "claude-haiku-4-5-20251001"   # cheap brief extraction
+
 safety:
   exclude: [politics, ragebait, nsfw, harassment, personal_drama, medical_advice, legal_advice, investment_advice]
   # app-revenue / "$X-mo" growth stories are IN-SCOPE marketing content (NOT financial advice).
@@ -214,9 +237,16 @@ llm:
   commentary_model: "claude-sonnet-5"              # Sonnet 5 — the public voice (rejects temperature; handled in openai_chat)
   classifier_model: "claude-haiku-4-5-20251001"    # (legacy field; judge_model below is used)
   embeddings_model: "text-embedding-3-small"
-  # Target the prompt asks for — deliberately under the real ~250 budget so the
-  # model has headroom (too_long was 50% of all draft blocks at 230).
-  max_commentary_chars: 200
+  # Target the prompt asks for. OPTIMAL-LENGTH strategy: teaching posts read as
+  # more valuable when dense, and X's 2026 dwell-time weighting rewards fuller
+  # posts that hold attention — so aim high in the 240-270 "teaching sweet spot"
+  # rather than thin one-liners (those win for hot-takes, not skill content).
+  # 245 lands ~245-270 after the model's slight overshoot; _vet_commentary
+  # smart_trims any over-length draft to the ~262 body budget at a sentence
+  # boundary, so a high target is safe (trimming beats blocking). ~262 is the hard
+  # ceiling on a non-Premium account; genuinely long-form posts need X Premium
+  # (which also lifts the reach penalty — the #1 growth lever).
+  max_commentary_chars: 245
   temperature: 0.7
 
 # AUTO-REPLY ENGINE — the follower-growth lever. Replies to fresh, on-topic

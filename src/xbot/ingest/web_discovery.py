@@ -27,6 +27,9 @@ _RESERVED = {
     "topics", "bookmarks", "verified", "premium", "media", "photo", "video",
     "live", "spaces", "broadcasts", "who_to_follow", "account", "twitterapi",
     "en", "es", "fr", "de", "www",
+    # generic site path segments that show up as x.com/<word> but aren't accounts
+    "blog", "trends", "news", "press", "support", "developers", "docs", "api",
+    "pricing", "product", "features", "careers", "team", "contact",
 }
 
 # Handles inside x.com / twitter.com / nitter URLs (profile OR /status/ links —

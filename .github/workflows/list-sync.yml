@@ -1,9 +1,10 @@
 name: list-sync
 
-# Weekly auto-update of the curated read-List: a discovery sweep scores accounts
-# the bot doesn't yet read on the List, then it PROMOTES consistent teachers and
-# DEMOTES members that drifted or went quiet. Changes appear in `xbot report`.
-# Your personal follows are never touched. Tunables live in config.yaml > listsync.
+# Weekly List hygiene: PROMOTE consistent teachers and DEMOTE members that drifted
+# or went quiet (free — uses data already read). Changes appear in `xbot report`.
+# Finding NEW accounts (billed web-search + vetting) is MANUAL and NOT run here —
+# do it yourself with `xbot list-sync --discover`. Your personal follows are never
+# touched. Tunables live in config.yaml > listsync.
 on:
   schedule:
     - cron: "0 14 * * 1"     # Mondays 14:00 UTC (07:00 PT)
