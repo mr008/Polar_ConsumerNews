@@ -68,6 +68,56 @@ def test_search_handles_unknown_provider(monkeypatch):
     assert search_handles(["q"], "key", provider="nope") == []
 
 
+# ------------------------- You.com provider adapter -------------------------
+
+def test_you_provider_maps_response_and_normalizes_snippets(monkeypatch):
+    import pytest
+    httpx = pytest.importorskip("httpx")
+    payload = {"results": {"web": [
+        {"url": "https://x.com/levelsio", "title": "Levels",
+         "description": "indie hacker", "snippets": ["ships fast", "12 startups"]},
+        {"url": "https://ex.com/a", "title": "A", "description": "d"},  # no snippets
+    ]}}
+
+    class _Resp:
+        def raise_for_status(self): pass
+        def json(self): return payload
+
+    sent = {}
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        sent.update(url=url, params=params, headers=headers)
+        return _Resp()
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    out = wd._you_search("who to follow", "KEY", 10, 20.0)
+    # You's `snippets` is normalized to our `extra_snippets`; missing -> []
+    assert out == [
+        {"url": "https://x.com/levelsio", "title": "Levels",
+         "description": "indie hacker", "extra_snippets": ["ships fast", "12 startups"]},
+        {"url": "https://ex.com/a", "title": "A", "description": "d", "extra_snippets": []},
+    ]
+    # correct endpoint + auth header + query param name
+    assert sent["url"] == "https://ydc-index.io/v1/search"
+    assert sent["headers"]["X-API-Key"] == "KEY"
+    assert sent["params"]["query"] == "who to follow"
+    # registered so both discovery and blog-content can select it
+    assert wd._PROVIDERS.get("you") is wd._you_search
+
+
+def test_you_search_survives_empty_results(monkeypatch):
+    import pytest
+    httpx = pytest.importorskip("httpx")
+
+    class _Resp:
+        def raise_for_status(self): pass
+        def json(self): return {}          # no `results` key at all
+
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: _Resp())
+    assert wd._you_search("q", "KEY", 5, 20.0) == []
+
+
 # ------------------------- web discovery sweep (orchestrator) -------------------------
 
 class _FakeSource:

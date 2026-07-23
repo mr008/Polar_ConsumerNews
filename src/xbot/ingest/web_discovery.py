@@ -9,8 +9,9 @@ vetted by reading a few of each account's recent posts via the X API (capped) an
 scored by the existing teaching judge, so only consistent teachers reach the List.
 
 Search is FREE (Brave free tier: 2,000 queries/mo). Only the vetting reads are
-billed, and those are hard-capped in config. Provider-pluggable: only Brave is
-implemented now; Google CSE / SerpAPI could slot in behind `search_provider`.
+billed, and those are hard-capped in config. Provider-pluggable behind `web_provider`:
+`brave` (default) or `you` (You.com, a paid alternative kept as an option); Google
+CSE / SerpAPI could slot in the same way (add a fn to `_PROVIDERS`).
 """
 from __future__ import annotations
 
@@ -103,4 +104,24 @@ def _brave_search(query: str, api_key: str, count: int, timeout: float) -> list[
     return resp.json().get("web", {}).get("results", []) or []
 
 
-_PROVIDERS = {"brave": _brave_search}
+def _you_search(query: str, api_key: str, count: int, timeout: float) -> list[dict]:
+    """You.com Search API -> [{url, title, description, extra_snippets}]. Results
+    live under results.web; You calls the excerpt list `snippets`, which we
+    normalize to `extra_snippets` so downstream code stays provider-agnostic.
+    Paid API (free starter credits) — no Brave-style free tier."""
+    import httpx  # lazy — keeps the dry-run path dependency-light
+
+    resp = httpx.get(
+        "https://ydc-index.io/v1/search",
+        params={"query": query, "count": max(1, min(100, count))},
+        headers={"Accept": "application/json", "X-API-Key": api_key},
+        timeout=timeout,
+    )
+    resp.raise_for_status()
+    web = (resp.json().get("results") or {}).get("web") or []
+    return [{"url": r.get("url", ""), "title": r.get("title", ""),
+             "description": r.get("description", ""),
+             "extra_snippets": r.get("snippets") or []} for r in web]
+
+
+_PROVIDERS = {"brave": _brave_search, "you": _you_search}
