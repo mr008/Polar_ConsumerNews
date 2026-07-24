@@ -197,8 +197,7 @@ posting:
 # No X reads. Needs SEARCH_API_KEY. Finding NEW X ACCOUNTS is separate + MANUAL
 # (`xbot list-sync --discover`) — not scheduled.
 webcontent:
-  enabled: false                 # BUILT + tested, NOT shipped. Flip true to roll out
-                                 # (also uncomment the cron in web-content.yml).
+  enabled: true                  # LIVE (2026-07-24): scheduled 2x/day via web-content.yml
   provider: brave
   queries:                       # tactical, teaching-first — each is one free search
     - "how to make viral AI UGC video ads tactics guide"

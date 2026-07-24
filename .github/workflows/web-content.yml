@@ -6,12 +6,13 @@ name: web-content
 # Free search; only new-article summaries cost (~cents/mo). No X reads. Config lives
 # in config.yaml > webcontent. Finding new X ACCOUNTS is separate + manual.
 on:
-  # NOT SHIPPED YET. To roll out: set webcontent.enabled: true in config.yaml AND
-  # uncomment the schedule below (2x/day). Until then this runs only on manual
-  # dispatch, and collect-web no-ops while webcontent.enabled is false.
-  # schedule:
-  #   - cron: "0 13 * * *"     # ~06:00 PT
-  #   - cron: "0 1 * * *"      # ~18:00 PT
+  # LIVE (2026-07-24): runs 2x/day. collect-web finds tactical blog posts, summarizes
+  # each into a teaching brief, and drafts enter the same ranked pool as X posts —
+  # published by the normal publish flow (autonomous, when they rank high + pass safety).
+  # Requires webcontent.enabled: true in config.yaml and the SEARCH_API_KEY repo secret.
+  schedule:
+    - cron: "0 13 * * *"     # ~06:00 PT
+    - cron: "0 1 * * *"      # ~18:00 PT
   workflow_dispatch: {}
 
 jobs:
