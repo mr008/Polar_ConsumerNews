@@ -739,6 +739,71 @@ class Orchestrator:
         self.repo.set_state("last_snapshot_day", today)
         return {"status": "ok", "day": today, **me}
 
+    # ---------- Curator shadow (Phase 2: agentic route judged blind) ----------
+    def curate_shadow(self, limit: int = 15) -> dict:
+        """Run the Curator session over the same recent candidates the pipeline
+        saw and store its verdicts + drafts in curator_shadow — WITHOUT touching
+        the live queue. Cutover (mode.editorial: curator) is gated on this
+        shadow data showing agreement. Judged BLIND: the briefing carries no
+        pipeline scores, so agreement is a real signal, not an echo.
+
+        Fail-quiet by design: no token / no CLI / governor ceiling → no-op."""
+        import json as _json
+        if self.cfg.get("mode.curator", "off") != "shadow":
+            return {"status": "off"}
+        from .agents import run_session
+        from .models import utcnow
+
+        candidates = []
+        for p in self.repo.recent_posts(48):
+            if self.repo.has_posted(p.tweet_id) or p.is_retweet or p.is_reply:
+                continue
+            s = self.repo.get_score(p.tweet_id)
+            candidates.append((s.quote_score if s else 0.0, p))
+        candidates.sort(key=lambda t: t[0], reverse=True)
+        batch = [p for _, p in candidates[:limit]]
+        if not batch:
+            return {"status": "no_candidates"}
+
+        from pathlib import Path
+        base = Path("agent/prompts/curator.md")
+        voice = Path("agent/voice.md")
+        prompt = (
+            (base.read_text(encoding="utf-8") if base.exists() else "")
+            + "\n\nVOICE SPEC:\n"
+            + (voice.read_text(encoding="utf-8") if voice.exists() else "")
+            + "\n\nCANDIDATES (JSON):\n"
+            + _json.dumps([{
+                "tweet_id": p.tweet_id, "author": p.author_handle,
+                "followers": p.author_follower_count, "text": p.text[:600],
+            } for p in batch])
+            + "\n\nReturn ONLY a JSON array, one object per candidate: "
+            '{"tweet_id": ..., "verdict": "pick"|"skip", "teaching": 0.0-1.0, '
+            '"reason": "<=15 words", "draft": "<the post text, picks only>"}. '
+            "Pick AT MOST 3. SKIP freely — nothing pickable is a valid answer.")
+        res = run_session("curator", prompt, self.repo, allowed_tools="Read",
+                          max_turns=4,
+                          model=self.cfg.get("llm.curator_model", "") or None)
+        if res["status"] != "ok":
+            return {"status": res["status"]}
+        raw = res["result"].strip()
+        if raw.startswith("```"):
+            raw = raw.strip("`")
+            raw = raw[raw.find("["):raw.rfind("]") + 1] if "[" in raw else raw
+        try:
+            rows = _json.loads(raw)
+            assert isinstance(rows, list)
+        except Exception:
+            self.repo.log_run("agent", detail="curator: unparseable verdict JSON")
+            return {"status": "unparseable"}
+        known = {p.tweet_id for p in batch}
+        rows = [r for r in rows if isinstance(r, dict)
+                and str(r.get("tweet_id", "")) in known]
+        self.repo.log_curator_verdicts(utcnow().isoformat(), rows)
+        picks = sum(1 for r in rows if r.get("verdict") == "pick")
+        return {"status": "ok", "judged": len(rows), "picks": picks,
+                "turns": res.get("turns", 0)}
+
     # ---------- outcome harvester (the autonomy learning substrate) ----------
     def harvest(self) -> dict:
         """Capture engagement snapshots of OUR OWN recent posts at fixed

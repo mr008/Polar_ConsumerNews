@@ -1,0 +1,55 @@
+# The Mechanic's daily heartbeat (AUTONOMY.md Phase 1).
+#
+# Deterministic detectors run against the live DB; when any trip, a report
+# (with a governed LLM diagnosis when CLAUDE_CODE_OAUTH_TOKEN is present —
+# fail-quiet otherwise) lands in ONE rolling GitHub issue. The dead-man switch
+# lives here: no successful post in 24h → high-severity trip → issue ping.
+#
+# This workflow only ever OBSERVES and NOTIFIES. Reduce-only self-repair
+# actions arrive with later phases behind the constitution.
+name: mechanic
+
+on:
+  schedule:
+    - cron: "30 14 * * *"    # daily, 06:30/07:30 PT — before the first window
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  heartbeat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: install
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          pip install -e ".[turso]"
+      - name: detect + diagnose
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+        run: xbot mechanic
+      - name: notify (rolling issue)
+        if: ${{ hashFiles('data/mechanic_report.md') != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TITLE="xbot mechanic: health trips"
+          EXISTING=$(gh issue list --state open --search "in:title \"$TITLE\"" \
+                       --json number --jq '.[0].number' || true)
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body-file data/mechanic_report.md
+          else
+            gh issue create --title "$TITLE" --body-file data/mechanic_report.md
+          fi

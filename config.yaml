@@ -5,6 +5,12 @@ mode:
   source: api                  # LIVE: reading your real home timeline
   publisher: api               # LIVE: posts go to X
   autonomous: true             # AUTONOMOUS: the publish workflow posts without manual review
+  # CURATOR (AUTONOMY.md Phase 2): off | shadow. `shadow` runs the agentic
+  # editorial session alongside the live pipeline, storing blind verdicts in
+  # curator_shadow for agreement analysis — the live queue is untouched.
+  # No-ops quietly until CLAUDE_CODE_OAUTH_TOKEN exists in CI. Cutover to a
+  # `mode.editorial: curator` switch is gated on this shadow data.
+  curator: shadow
 
 scoping:
   # home = full home timeline (server-side since_id dedup, pay only for new posts).
@@ -234,6 +240,9 @@ voice:
 llm:
   provider: anthropic                   # anthropic | groq | xai | gemini | openai | auto
   commentary_model: "claude-sonnet-5"              # Sonnet 5 — the public voice (rejects temperature; handled in openai_chat)
+  # Curator session model (headless Claude Code alias, e.g. sonnet | opus).
+  # Empty = the CLI's default. Strategist-tunable within constitution bounds.
+  curator_model: ""
   classifier_model: "claude-haiku-4-5-20251001"    # (legacy field; judge_model below is used)
   embeddings_model: "text-embedding-3-small"
   # Target the prompt asks for. OPTIMAL-LENGTH strategy: teaching posts read as

@@ -309,9 +309,147 @@ def cmd_reply_queue(args):
         print(f"\nSession done — {posted} posted, {skipped} skipped.")
 
 
+def cmd_briefing(args):
+    """Compile the Strategist's briefing pack from the DB to data/briefing.md."""
+    orch = _setup(args)
+    from .briefing import build_briefing
+    text = build_briefing(orch.repo, orch.cfg)
+    out = Path("data/briefing.md")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(text, encoding="utf-8")
+    print(f"briefing: {len(text.splitlines())} lines -> {out}")
+
+
+def cmd_strategist(args):
+    """MEMO-ONLY Strategist session (AUTONOMY.md Phase 4 scaffold, run weekly).
+    Reads the briefing + its own recent memos, writes agent/memos/<date>.md.
+    Proposals only — it applies nothing; the workflow commits the memo. Always
+    exits 0 (fail quiet)."""
+    orch = _setup(args)
+    from .agents import run_session
+    from .briefing import build_briefing
+    from .models import to_local, utcnow
+
+    briefing = build_briefing(orch.repo, orch.cfg)
+    memos_dir = Path("agent/memos")
+    memos_dir.mkdir(parents=True, exist_ok=True)
+    past = sorted(memos_dir.glob("*.md"))[-3:]
+    past_text = "\n\n".join(
+        f"--- memo {p.name} ---\n{p.read_text(encoding='utf-8')[:4000]}"
+        for p in past) or "(no past memos — this is the first session)"
+    prompt_path = Path("agent/prompts/strategist.md")
+    base = prompt_path.read_text(encoding="utf-8") if prompt_path.exists() else ""
+    prompt = (base
+              + "\n\nTHIS SESSION IS MEMO-ONLY (Phase 0-1 of the rollout): "
+              "analyze and PROPOSE — apply nothing, edit nothing. Reply with "
+              "the memo markdown only.\n\nYOUR PAST MEMOS:\n" + past_text
+              + "\n\nBRIEFING PACK:\n" + briefing)
+    res = run_session("strategist", prompt, orch.repo, allowed_tools="Read",
+                      max_turns=12)
+    print(f"strategist: {res['status']}")
+    if res["status"] != "ok":
+        return 0
+    day = to_local(utcnow(), getattr(orch.repo, "tz_name", "UTC")).date().isoformat()
+    out = memos_dir / f"{day}.md"
+    out.write_text(res["result"], encoding="utf-8")
+    print(f"  memo -> {out} (turns={res['turns']}, "
+          f"governor {res['used_today']}/{res['ceiling']})")
+    return 0
+
+
+def cmd_reply_nudge(args):
+    """Reply copilot (AUTONOMY.md parallel track): count eligible reply targets
+    from data already in the DB (zero X reads) and write data/reply_nudge.md
+    for the workflow to ping the owner with. Replies stay human — X policy."""
+    orch = _setup(args)
+    targets = orch.reply_queue_targets(limit=10)
+    if not targets:
+        print("reply-nudge: no eligible targets")
+        return 0
+    lines = [f"## {len(targets)} reply target(s) ready",
+             "", "Replies are the 27x growth lever and X forces them to stay "
+             "manual. Run `xbot reply-queue` locally while these are fresh:", ""]
+    for p in targets[:6]:
+        age = int(p.age_hours * 60)
+        lines.append(f"- @{p.author_handle} ({p.author_follower_count:,} followers, "
+                     f"{age}m old): {p.text.splitlines()[0][:90]}")
+    out = Path("data/reply_nudge.md")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("\n".join(lines), encoding="utf-8")
+    print(f"reply-nudge: {len(targets)} target(s) -> {out}")
+    return 0
+
+
 def cmd_snapshot(args):
     orch = _setup(args)
     print("snapshot:", orch.snapshot())
+
+
+def cmd_detect(args):
+    """Run the deterministic health detectors. Always exits 0 — the workflow
+    layer decides what a trip means. --json emits machine output only."""
+    import json as _json
+    orch = _setup(args)
+    from .detectors import run_detectors
+    trips = run_detectors(orch.repo, orch.cfg)
+    if args.json:
+        print(_json.dumps(trips))
+        return 0
+    if not trips:
+        print("detect: all healthy")
+        return 0
+    print(f"detect: {len(trips)} trip(s)")
+    for t in trips:
+        print(f"  [{t['severity']}] {t['detector']}: {t['summary']}")
+    return 0
+
+
+def cmd_mechanic(args):
+    """Detect → (if trips) diagnose with a governed read-only session → write
+    data/mechanic_report.md for the workflow to post as an issue. Fail-quiet:
+    without the OAuth token the report carries the raw detector JSON only."""
+    import json as _json
+    orch = _setup(args)
+    from .detectors import run_detectors
+    trips = run_detectors(orch.repo, orch.cfg)
+    if not trips:
+        print("mechanic: all healthy — no report")
+        return 0
+    lines = ["## xbot mechanic report", ""]
+    for t in trips:
+        lines.append(f"- **[{t['severity']}] {t['detector']}** — {t['summary']}")
+    lines += ["", "```json", _json.dumps(trips, indent=2), "```", ""]
+
+    from .agents import run_session
+    prompt_path = Path("agent/prompts/mechanic.md")
+    base = prompt_path.read_text(encoding="utf-8") if prompt_path.exists() else ""
+    prompt = (base + "\n\nDetector report (JSON):\n" + _json.dumps(trips)
+              + "\n\nDiagnose the most likely root cause per trip and recommend "
+              "the smallest reduce-only action. You are read-only this session: "
+              "reply with the diagnosis as markdown, nothing else.")
+    res = run_session("mechanic", prompt, orch.repo, allowed_tools="Read",
+                      max_turns=8)
+    if res["status"] == "ok":
+        lines += ["### Diagnosis (Mechanic session)", "", res["result"], ""]
+    else:
+        lines += [f"_(no LLM diagnosis: {res['status']})_", ""]
+    out = Path("data/mechanic_report.md")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("\n".join(lines), encoding="utf-8")
+    print(f"mechanic: {len(trips)} trip(s) — report at {out}")
+    return 0
+
+
+def cmd_curate(args):
+    """Curator shadow session (Phase 2): judge recent candidates blind, store
+    verdicts for agreement analysis. Never touches the live queue. Always
+    exits 0 — fail-quiet is the contract."""
+    orch = _setup(args)
+    res = orch.curate_shadow()
+    print(f"curate[shadow]: {res['status']}"
+          + (f" — judged {res.get('judged', 0)}, picks {res.get('picks', 0)}"
+             if res.get("status") == "ok" else ""))
+    return 0
 
 
 def cmd_harvest(args):
@@ -497,6 +635,15 @@ def main(argv=None):
     sub.add_parser("snapshot").set_defaults(func=cmd_snapshot)
     sub.add_parser("harvest").set_defaults(func=cmd_harvest)
     sub.add_parser("agent-smoke").set_defaults(func=cmd_agent_smoke)
+    p_detect = sub.add_parser("detect")
+    p_detect.add_argument("--json", action="store_true",
+                          help="machine-readable trips only")
+    p_detect.set_defaults(func=cmd_detect)
+    sub.add_parser("mechanic").set_defaults(func=cmd_mechanic)
+    sub.add_parser("curate").set_defaults(func=cmd_curate)
+    sub.add_parser("briefing").set_defaults(func=cmd_briefing)
+    sub.add_parser("strategist").set_defaults(func=cmd_strategist)
+    sub.add_parser("reply-nudge").set_defaults(func=cmd_reply_nudge)
     p_ls = sub.add_parser("list-sync")
     p_ls.add_argument("--dry-run", action="store_true",
                       help="show the promote/demote diff; no API writes, no discovery read")

@@ -1,0 +1,14 @@
+# Protected paths (AUTONOMY.md / agent/constitution.yaml): PRs touching these
+# require the owner's approving review. With branch protection's
+# "require review from code owners" enabled, this is enforced by GitHub itself
+# — the agents can never edit their own gates, caps, safety filters, or the
+# permanent pipeline fallback route.
+/agent/constitution.yaml            @mr008
+/agent/voice.md                     @mr008
+/.github/                           @mr008
+/AUTONOMY.md                        @mr008
+/src/xbot/commentary/safety.py      @mr008
+/src/xbot/commentary/qa.py          @mr008
+/src/xbot/commentary/generate.py    @mr008
+/src/xbot/score/teaching_judge.py   @mr008
+/scripts/validate_bounds.py         @mr008

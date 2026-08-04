@@ -63,7 +63,9 @@ def parse_claude_json(text: str) -> dict:
     usage = data.get("usage") or {}
     return {
         "ok": not data.get("is_error", False),
-        "result": str(data.get("result", ""))[:2000],
+        # Generous cap: Curator verdict JSON and Strategist memos ride through
+        # here; truncating them would corrupt valid output.
+        "result": str(data.get("result", ""))[:40000],
         "turns": int(data.get("num_turns", 0) or 0),
         "input_tokens": int(usage.get("input_tokens", 0) or 0),
         "output_tokens": int(usage.get("output_tokens", 0) or 0),

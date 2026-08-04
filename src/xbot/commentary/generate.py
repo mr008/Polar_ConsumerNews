@@ -72,9 +72,33 @@ class CommentaryGenerator(Protocol):
 
 # ----------------------------- system prompt -----------------------------
 
+# SHARED VOICE SPEC (AUTONOMY.md): agent/voice.md is the single source of truth
+# for the public voice — the pipeline route (this file) and the Curator route
+# both read it, so a Strategist voice improvement lands in one place and the
+# fallback route can never go stale. The embedded prompt below is the
+# byte-identical fallback for when the file isn't present (installed package
+# run outside the repo); test_outcomes golden-tests the equality.
+VOICE_SPEC_PATH = "agent/voice.md"
+
+
+def _voice_spec_text() -> str | None:
+    try:
+        from pathlib import Path
+        p = Path(VOICE_SPEC_PATH)
+        if p.exists():
+            return p.read_text(encoding="utf-8")
+    except Exception:
+        pass
+    return None
+
+
 def build_system_prompt(cfg: NS) -> str:
     v = cfg.voice
     max_chars = cfg.get("llm.max_commentary_chars", 240)
+    spec = _voice_spec_text()
+    if spec:
+        return (spec.replace("<<STYLE>>", str(v.style))
+                    .replace("<<MAX_CHARS>>", str(max_chars))).strip()
     return f"""You write the commentary for a curator account whose mission is to SHARE SKILLS for making viral consumer-app content (AI UGC, content-driven growth, distribution).
 
 VOICE: {v.style}. Punchy operator energy, NOT a measured curator. Skill-sharing angle: teach the tactic — why it works / the move to steal / the part people miss.

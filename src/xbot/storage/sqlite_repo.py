@@ -139,6 +139,16 @@ CREATE TABLE IF NOT EXISTS post_features (
     posted_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS curator_shadow (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_at TEXT,
+    tweet_id TEXT,
+    verdict TEXT,
+    teaching REAL,
+    draft TEXT,
+    reason TEXT
+);
+
 CREATE TABLE IF NOT EXISTS agent_usage (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts TEXT,
@@ -700,6 +710,31 @@ class SqliteRepository:
              f.get("quote_score"), f.get("posted_at", utcnow().isoformat())),
         )
         self.conn.commit()
+
+    # ---------- curator shadow (Phase 2: agentic route judged against pipeline) ----------
+    def log_curator_verdicts(self, run_at: str, rows: list[dict]) -> None:
+        for r in rows:
+            self.conn.execute(
+                """INSERT INTO curator_shadow
+                       (run_at, tweet_id, verdict, teaching, draft, reason)
+                   VALUES (?,?,?,?,?,?)""",
+                (run_at, str(r.get("tweet_id", "")),
+                 r.get("verdict", "skip"), r.get("teaching"),
+                 (r.get("draft") or "")[:1200], (r.get("reason") or "")[:300]),
+            )
+        self.conn.commit()
+
+    def curator_shadow_recent(self, within_hours: float = 72) -> list[dict]:
+        cutoff = (utcnow() - timedelta(hours=within_hours)).isoformat()
+        rows = self.conn.execute(
+            "SELECT run_at, tweet_id, verdict, teaching, draft, reason "
+            "FROM curator_shadow WHERE run_at >= ? ORDER BY run_at DESC",
+            (cutoff,),
+        ).fetchall()
+        return [{"run_at": r["run_at"], "tweet_id": r["tweet_id"],
+                 "verdict": r["verdict"], "teaching": r["teaching"],
+                 "draft": r["draft"] or "", "reason": r["reason"] or ""}
+                for r in rows]
 
     # ---------- agent usage (subscription window governor) ----------
     def log_agent_usage(self, session: str, model: str, turns: int,

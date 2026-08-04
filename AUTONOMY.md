@@ -98,14 +98,18 @@ X reads ~$20 (capped) + writes ~$1.5 + harvester ~$0.5 + embeddings ~$0.1
 
 | Phase | Ships | Status |
 |---|---|---|
-| 0 — Senses + auth | outcome harvester, feature tagging, usage governor + agent_usage ledger, agent-smoke workflow, this doc, constitution + prompt skeletons | **BUILT (this branch)** |
-| 1 — Mechanic | `detectors.py` in every workflow, dead-man switch, notifications, reduce-only self-repair | pending |
-| 2 — Curator shadow | Curator session per collect run writing to a shadow table alongside the live pipeline; shared voice spec; CODEOWNERS + bounds validator ship | pending |
-| 3 — Curator cutover | `mode.editorial: curator`; pipeline stays as permanent fallback | pending |
-| 4 — Advisory Strategist | weekly memos + config/code PRs the owner merges; ≥80% merged-unmodified over 2–3 weeks graduates | pending |
-| 5 — Bounded → full self-modification | config-within-bounds auto-merges, then code PRs behind the full gate stack + canary | pending |
-| ∥ tracks | original-content ramp, reply copilot (X policy keeps replies human) | pending |
+| 0 — Senses + auth | outcome harvester, feature tagging, usage governor + agent_usage ledger, agent-smoke workflow, this doc, constitution + prompt skeletons | **BUILT** |
+| 1 — Mechanic | `detectors.py` (dead-man, budget, publish-failing, supply, agent-auth, harvest-stall) + `xbot detect`/`mechanic`, daily heartbeat workflow with rolling-issue notifications + governed LLM diagnosis | **BUILT** |
+| 2 — Curator shadow | `xbot curate` per collect run: blind verdicts + drafts into curator_shadow (live queue untouched); shared voice spec (`agent/voice.md`, golden-tested byte-identical); CODEOWNERS + `validate_bounds.py` + ci.yml | **BUILT** — activates when the OAuth secret lands; cutover gated on shadow agreement |
+| 3 — Curator cutover | `mode.editorial: curator`; pipeline stays as permanent fallback | pending shadow data |
+| 4 — Advisory Strategist | weekly memo-only sessions **BUILT** (`xbot briefing`/`strategist` + strategist.yml commits memos); config/code PRs the owner merges come next; ≥80% merged-unmodified graduates | scaffold BUILT |
+| 5 — Bounded → full self-modification | config-within-bounds auto-merges, then code PRs behind the full gate stack + canary | pending 2-4 |
+| ∥ tracks | reply copilot **BUILT** (`xbot reply-nudge` + workflow pings at reply-optimal times); original-content ramp = Strategist experiments once data flows | partial |
 
-Phase 0 manual steps (owner): run `claude setup-token` locally → add the
-token as the `CLAUDE_CODE_OAUTH_TOKEN` repo secret → dispatch the
-`agent-smoke` workflow once and confirm green.
+Owner manual steps to activate everything built:
+1. push + merge this branch (as mr008);
+2. `claude setup-token` → repo secret `CLAUDE_CODE_OAUTH_TOKEN`;
+3. dispatch `agent-smoke` once, confirm green (Curator shadow + Strategist
+   then run themselves on schedule);
+4. when ready for Phase 2 gates: branch-protect `main` with required checks
+   `ci / tests` + `ci / bounds` and "require review from code owners".
