@@ -49,6 +49,16 @@ def _setup(args) -> Orchestrator:
     return Orchestrator(cfg, repo)
 
 
+def _setup_light(args) -> Orchestrator:
+    """cfg + repo only — for the ops/agent commands whose workflows run
+    WITHOUT X/LLM secrets (least privilege). See Orchestrator.light."""
+    load_dotenv()
+    cfg = load_config(args.config)
+    repo = get_repository(cfg)
+    repo.init_schema()
+    return Orchestrator.light(cfg, repo)
+
+
 def _fmt_score(s) -> str:
     return (f"qs={s.quote_score:.3f} stage1={s.stage1_score:.3f} "
             f"topic={s.topic_fit:.2f} qw={s.quote_worthy:.2f}")
@@ -311,7 +321,7 @@ def cmd_reply_queue(args):
 
 def cmd_briefing(args):
     """Compile the Strategist's briefing pack from the DB to data/briefing.md."""
-    orch = _setup(args)
+    orch = _setup_light(args)
     from .briefing import build_briefing
     text = build_briefing(orch.repo, orch.cfg)
     out = Path("data/briefing.md")
@@ -325,7 +335,7 @@ def cmd_strategist(args):
     Reads the briefing + its own recent memos, writes agent/memos/<date>.md.
     Proposals only — it applies nothing; the workflow commits the memo. Always
     exits 0 (fail quiet)."""
-    orch = _setup(args)
+    orch = _setup_light(args)
     from .agents import run_session
     from .briefing import build_briefing
     from .models import to_local, utcnow
@@ -361,7 +371,7 @@ def cmd_reply_nudge(args):
     """Reply copilot (AUTONOMY.md parallel track): count eligible reply targets
     from data already in the DB (zero X reads) and write data/reply_nudge.md
     for the workflow to ping the owner with. Replies stay human — X policy."""
-    orch = _setup(args)
+    orch = _setup_light(args)
     targets = orch.reply_queue_targets(limit=10)
     if not targets:
         print("reply-nudge: no eligible targets")
@@ -389,7 +399,7 @@ def cmd_detect(args):
     """Run the deterministic health detectors. Always exits 0 — the workflow
     layer decides what a trip means. --json emits machine output only."""
     import json as _json
-    orch = _setup(args)
+    orch = _setup_light(args)
     from .detectors import run_detectors
     trips = run_detectors(orch.repo, orch.cfg)
     if args.json:
@@ -409,7 +419,7 @@ def cmd_mechanic(args):
     data/mechanic_report.md for the workflow to post as an issue. Fail-quiet:
     without the OAuth token the report carries the raw detector JSON only."""
     import json as _json
-    orch = _setup(args)
+    orch = _setup_light(args)
     from .detectors import run_detectors
     trips = run_detectors(orch.repo, orch.cfg)
     if not trips:
@@ -444,7 +454,7 @@ def cmd_curate(args):
     """Curator shadow session (Phase 2): judge recent candidates blind, store
     verdicts for agreement analysis. Never touches the live queue. Always
     exits 0 — fail-quiet is the contract."""
-    orch = _setup(args)
+    orch = _setup_light(args)
     res = orch.curate_shadow()
     print(f"curate[shadow]: {res['status']}"
           + (f" — judged {res.get('judged', 0)}, picks {res.get('picks', 0)}"
@@ -465,7 +475,7 @@ def cmd_agent_smoke(args):
     before any real brain depends on it. Read-only, few turns, logged to the
     governor ledger like every future session. Exits non-zero on failure so the
     smoke workflow shows red — production agent flows fail quiet instead."""
-    orch = _setup(args)
+    orch = _setup_light(args)
     from .agents import run_session
     prompt = ("You are the xbot agent-auth smoke test. Read config.yaml in the "
               "current directory and answer in exactly ONE line of the form "

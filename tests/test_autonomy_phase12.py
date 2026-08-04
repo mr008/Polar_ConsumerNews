@@ -160,6 +160,25 @@ def test_curate_shadow_off_and_failquiet(monkeypatch):
     assert repo.curator_shadow_recent(1) == []
 
 
+# ---------------- Orchestrator.light (ops commands without X/LLM secrets) ----------------
+
+def test_light_orchestrator_needs_no_secrets(monkeypatch):
+    """The agent workflows (smoke/mechanic/strategist/reply-nudge) carry no X
+    or LLM secrets by design. Orchestrator.light must construct and serve
+    every ops path without them — the agent-smoke run failed on exactly this."""
+    for k in ("X_API_KEY", "X_API_SECRET", "X_ACCESS_TOKEN",
+              "X_ACCESS_TOKEN_SECRET", "X_USER_ID", "ANTHROPIC_API_KEY"):
+        monkeypatch.delenv(k, raising=False)
+    repo = _repo()
+    cfg = _cfg({"mode": {"source": "api", "autonomous": True, "curator": "off"},
+                "replies": {"max_target_age_minutes": 360}})
+    orch = Orchestrator.light(cfg, repo)          # would SystemExit via __init__
+    assert orch.harvest()["status"] == "unsupported_source"
+    assert orch.curate_shadow() == {"status": "off"}
+    assert orch.reply_queue_targets(limit=5) == []
+    assert run_detectors(repo, cfg)               # detectors run fine too
+
+
 # ---------------- bounds validator ----------------
 
 def _bounds_mod():

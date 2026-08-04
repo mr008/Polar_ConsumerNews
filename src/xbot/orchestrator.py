@@ -50,6 +50,24 @@ class Orchestrator:
         self.publisher = get_publisher(cfg)
         self.judge_reasons: dict[str, str] = {}
 
+    @classmethod
+    def light(cls, cfg: NS, repo: Repository) -> "Orchestrator":
+        """Ops/agent construction: cfg + repo only — no source adapter, no LLM
+        clients, no publisher. The agent workflows (smoke/mechanic/strategist/
+        reply-nudge) run WITHOUT X or LLM secrets by design (least privilege),
+        and the full __init__ hard-exits when those are absent. Methods that
+        do touch self.source degrade to their unsupported_source path."""
+        o = object.__new__(cls)
+        o.cfg = cfg
+        o.repo = repo
+        o.source = None
+        o.generator = None
+        o.prescreen = None
+        o.judge = None
+        o.publisher = None
+        o.judge_reasons = {}
+        return o
+
     # ---------- collector flow ----------
     def _read_budget_ok(self) -> bool:
         """False (and logs) when the monthly read budget is spent."""
