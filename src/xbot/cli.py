@@ -10,6 +10,8 @@
     xbot reply-scan    # auto-reply engine (DISABLED — blocked by X Feb-2026 policy)
     xbot reply-queue   # human-in-the-loop: bot drafts replies, you post them manually
     xbot snapshot      # record today's follower count (once per PT day)
+    xbot harvest       # capture engagement milestones for our own recent posts
+    xbot agent-smoke   # prove subscription (OAuth) agent auth works headless
     xbot list-sync     # build/refresh the curated read-List from author yield (--dry-run to preview)
     xbot report        # daily summary
 """
@@ -312,6 +314,36 @@ def cmd_snapshot(args):
     print("snapshot:", orch.snapshot())
 
 
+def cmd_harvest(args):
+    orch = _setup(args)
+    res = orch.harvest()
+    print(f"harvest: {res['status']} — captured {res.get('count', 0)} snapshot(s)")
+    for tid, m in (res.get("milestones") or {}).items():
+        print(f"  {m:>4} → https://x.com/i/status/{tid}")
+
+
+def cmd_agent_smoke(args):
+    """Prove subscription auth (CLAUDE_CODE_OAUTH_TOKEN) works headless in CI
+    before any real brain depends on it. Read-only, few turns, logged to the
+    governor ledger like every future session. Exits non-zero on failure so the
+    smoke workflow shows red — production agent flows fail quiet instead."""
+    orch = _setup(args)
+    from .agents import run_session
+    prompt = ("You are the xbot agent-auth smoke test. Read config.yaml in the "
+              "current directory and answer in exactly ONE line of the form "
+              "`per_day=<posting.per_day> autonomous=<mode.autonomous>`. "
+              "Do not modify anything.")
+    res = run_session("smoke", prompt, orch.repo, allowed_tools="Read", max_turns=6)
+    print(f"agent-smoke: {res['status']}")
+    if res["status"] == "ok":
+        print(f"  reply: {res['result'][:120]}")
+        print(f"  turns={res['turns']} cost=${res['cost_usd']:.4f} "
+              f"governor {res['used_today']}/{res['ceiling']}")
+        return 0
+    print(f"  detail: {res.get('detail', '')}")
+    return 1
+
+
 def cmd_list_sync(args):
     """Auto-update the curated read-List (xbot list-sync). Default: discovery sweep
     + apply promote/demote (creates a PRIVATE List if none configured). --dry-run
@@ -463,6 +495,8 @@ def main(argv=None):
                       help="max candidates to walk through (default 15)")
     p_rq.set_defaults(func=cmd_reply_queue)
     sub.add_parser("snapshot").set_defaults(func=cmd_snapshot)
+    sub.add_parser("harvest").set_defaults(func=cmd_harvest)
+    sub.add_parser("agent-smoke").set_defaults(func=cmd_agent_smoke)
     p_ls = sub.add_parser("list-sync")
     p_ls.add_argument("--dry-run", action="store_true",
                       help="show the promote/demote diff; no API writes, no discovery read")

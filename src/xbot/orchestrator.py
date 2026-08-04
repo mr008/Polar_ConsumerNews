@@ -549,7 +549,41 @@ class Orchestrator:
                              draft.full_text)
         self.repo.set_draft_status(draft_id, "posted")
         self.repo.set_candidate(post.tweet_id, "posted")
+        # Feature tag for the outcome harvester (AUTONOMY.md). Never allowed to
+        # break publishing — the post is already live at this point.
+        try:
+            self._log_features(draft, post, our_id)
+        except Exception as e:
+            print(f"  [features] tagging failed ({type(e).__name__}) — post unaffected")
         return {"tweet_id": post.tweet_id, "our_id": our_id, "author": post.author_handle}
+
+    def _log_features(self, draft: Draft, post: Post, our_id: str) -> None:
+        """Record WHAT KIND of post just went out, so harvested outcomes can be
+        attributed to editorial choices (format, hook, slot, source) later."""
+        if not our_id:
+            return  # dry-run / review modes have nothing to harvest against
+        from .models import to_local, utcnow
+        score = self.repo.get_score(post.tweet_id)
+        text = draft.full_text
+        self.repo.log_features({
+            "our_tweet_id": our_id,
+            "source_tweet_id": post.tweet_id,
+            "author_handle": post.author_handle,
+            # route: which editorial engine produced the draft. "pipeline" =
+            # judge+commentary stages; "curator" arrives with mode.editorial.
+            "route": "pipeline",
+            "kind": "web" if is_web_source(post) else "qt",
+            "format": "thread" if draft.parts else "single",
+            "parts_n": len(draft.parts or []),
+            "chars": len(text),
+            "has_question": "?" in text,
+            "hook": (draft.commentary.splitlines() or [""])[0],
+            "window_hour": to_local(utcnow(), getattr(self.repo, "tz_name", "UTC")).hour,
+            "teaching": score.quote_worthy if score else None,
+            "topic_fit": score.topic_fit if score else None,
+            "quote_score": score.quote_score if score else None,
+            "posted_at": utcnow().isoformat(),
+        })
 
     # ---------- auto-reply engine ----------
     def reply_scan(self) -> dict:
@@ -704,6 +738,47 @@ class Orchestrator:
             self.repo.set_state("own_handle", me["handle"])
         self.repo.set_state("last_snapshot_day", today)
         return {"status": "ok", "day": today, **me}
+
+    # ---------- outcome harvester (the autonomy learning substrate) ----------
+    def harvest(self) -> dict:
+        """Capture engagement snapshots of OUR OWN recent posts at fixed
+        milestones (outcomes.py). Owned reads ~$0.001 each; a post is captured
+        at most once per milestone. Runs at the end of every collect pass.
+
+        Deliberately logged with read=0: the monthly circuit breaker guards the
+        $0.005 timeline reads, and letting ~$0.001 owned reads consume that
+        budget would trade content supply for telemetry. The owned-read count
+        is carried in the run detail instead, and the per-run ceiling plus the
+        milestone windows bound the spend structurally (~15 reads/day)."""
+        from .models import parse_dt, utcnow
+        from .outcomes import (HARVEST_MAX_AGE_DAYS, HARVEST_MAX_READS_PER_RUN,
+                               due_milestone)
+        fetch = getattr(self.source, "fetch_metrics", None)
+        if fetch is None:
+            return {"status": "unsupported_source", "count": 0}
+        due: dict[str, str] = {}
+        for r in self.repo.posted_recent(within_days=HARVEST_MAX_AGE_DAYS):
+            age_h = (utcnow() - parse_dt(r["posted_at"])).total_seconds() / 3600.0
+            m = due_milestone(age_h, self.repo.outcome_milestones(r["our_tweet_id"]))
+            if m:
+                due[r["our_tweet_id"]] = m
+        ids = list(due)[:HARVEST_MAX_READS_PER_RUN]
+        if not ids:
+            return {"status": "nothing_due", "count": 0}
+        try:
+            fresh = fetch(ids)
+        except Exception as e:
+            # Fail quiet: a missed snapshot self-heals at the next open window.
+            print(f"  [harvest] fetch failed ({type(e).__name__}) — will retry next run")
+            self.repo.log_run("harvest", detail=f"fetch_failed:{type(e).__name__}")
+            return {"status": "fetch_failed", "count": 0}
+        for tid, m in fresh.items():
+            if tid in due:
+                self.repo.log_outcome(tid, due[tid], m)
+        self.repo.log_run(
+            "harvest", detail=f"owned_reads:{len(ids)} captured:{len(fresh)}")
+        return {"status": "ok", "count": len(fresh),
+                "milestones": {t: due[t] for t in fresh if t in due}}
 
     # ---------- curated read-List: auto-update ----------
     def _qualifies(self, r: dict) -> bool:

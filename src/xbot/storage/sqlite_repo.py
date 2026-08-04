@@ -112,6 +112,46 @@ CREATE TABLE IF NOT EXISTS run_log (
     detail TEXT
 );
 
+CREATE TABLE IF NOT EXISTS post_outcomes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    our_tweet_id TEXT NOT NULL,
+    milestone TEXT NOT NULL,
+    likes INTEGER, reposts INTEGER, replies INTEGER, quotes INTEGER, views INTEGER,
+    captured_at TEXT,
+    UNIQUE(our_tweet_id, milestone)
+);
+
+CREATE TABLE IF NOT EXISTS post_features (
+    our_tweet_id TEXT PRIMARY KEY,
+    source_tweet_id TEXT,
+    author_handle TEXT,
+    route TEXT,
+    kind TEXT,
+    format TEXT,
+    parts_n INTEGER DEFAULT 0,
+    chars INTEGER DEFAULT 0,
+    has_question INTEGER DEFAULT 0,
+    hook TEXT,
+    window_hour INTEGER,
+    teaching REAL,
+    topic_fit REAL,
+    quote_score REAL,
+    posted_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS agent_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT,
+    ts_pt TEXT,
+    session TEXT,
+    model TEXT,
+    turns INTEGER DEFAULT 0,
+    input_tokens INTEGER DEFAULT 0,
+    output_tokens INTEGER DEFAULT 0,
+    cost_usd REAL DEFAULT 0,
+    detail TEXT
+);
+
 CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT);
 
 CREATE INDEX IF NOT EXISTS idx_posts_author ON posts(author_handle);
@@ -120,6 +160,7 @@ CREATE INDEX IF NOT EXISTS idx_posted_source ON posted_log(source_tweet_id);
 CREATE INDEX IF NOT EXISTS idx_candidates_status ON candidates(status);
 CREATE INDEX IF NOT EXISTS idx_reply_target ON reply_log(target_tweet_id);
 CREATE INDEX IF NOT EXISTS idx_reply_author ON reply_log(target_author);
+CREATE INDEX IF NOT EXISTS idx_outcomes_tweet ON post_outcomes(our_tweet_id);
 """
 
 
@@ -608,6 +649,84 @@ class SqliteRepository:
         return [{"day": r["day"], "followers": r["followers"],
                  "following": r["following"], "tweet_count": r["tweet_count"]}
                 for r in reversed(rows)]
+
+    # ---------- outcome harvester (metrics of OUR OWN posts over time) ----------
+    def posted_recent(self, within_days: int = 8) -> list[dict]:
+        """Our published posts young enough to still have open milestone windows.
+        Rows without our_tweet_id (dry-run history) are unharvestable — skipped."""
+        cutoff = (utcnow() - timedelta(days=within_days)).isoformat()
+        rows = self.conn.execute(
+            "SELECT our_tweet_id, posted_at FROM posted_log "
+            "WHERE posted_at >= ? AND our_tweet_id != '' AND our_tweet_id IS NOT NULL "
+            "ORDER BY posted_at DESC",
+            (cutoff,),
+        ).fetchall()
+        return [{"our_tweet_id": r["our_tweet_id"], "posted_at": r["posted_at"]}
+                for r in rows]
+
+    def outcome_milestones(self, our_tweet_id: str) -> set[str]:
+        rows = self.conn.execute(
+            "SELECT milestone FROM post_outcomes WHERE our_tweet_id=?", (our_tweet_id,)
+        ).fetchall()
+        return {r["milestone"] for r in rows}
+
+    def log_outcome(self, our_tweet_id: str, milestone: str, metrics: Metrics) -> None:
+        """Idempotent: one row per (post, milestone), ever — a re-run can't
+        overwrite a snapshot with later numbers under an early label."""
+        self.conn.execute(
+            """INSERT OR IGNORE INTO post_outcomes
+                   (our_tweet_id, milestone, likes, reposts, replies, quotes, views,
+                    captured_at)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (our_tweet_id, milestone, metrics.likes, metrics.reposts, metrics.replies,
+             metrics.quotes, metrics.views, metrics.captured_at.isoformat()),
+        )
+        self.conn.commit()
+
+    # ---------- post features (tagged at publish; joined to outcomes later) ----------
+    def log_features(self, f: dict) -> None:
+        self.conn.execute(
+            """INSERT INTO post_features (our_tweet_id, source_tweet_id, author_handle,
+                   route, kind, format, parts_n, chars, has_question, hook,
+                   window_hour, teaching, topic_fit, quote_score, posted_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(our_tweet_id) DO NOTHING""",
+            (f.get("our_tweet_id", ""), f.get("source_tweet_id", ""),
+             f.get("author_handle", ""), f.get("route", "pipeline"),
+             f.get("kind", "qt"), f.get("format", "single"),
+             int(f.get("parts_n", 0)), int(f.get("chars", 0)),
+             int(bool(f.get("has_question", False))), (f.get("hook", "") or "")[:160],
+             f.get("window_hour"), f.get("teaching"), f.get("topic_fit"),
+             f.get("quote_score"), f.get("posted_at", utcnow().isoformat())),
+        )
+        self.conn.commit()
+
+    # ---------- agent usage (subscription window governor) ----------
+    def log_agent_usage(self, session: str, model: str, turns: int,
+                        input_tokens: int = 0, output_tokens: int = 0,
+                        cost_usd: float = 0.0, detail: str = "") -> None:
+        now = utcnow()
+        self.conn.execute(
+            """INSERT INTO agent_usage (ts, ts_pt, session, model, turns,
+                   input_tokens, output_tokens, cost_usd, detail)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (now.isoformat(), to_local(now, self.tz_name).isoformat(), session,
+             model, turns, input_tokens, output_tokens, cost_usd,
+             (detail or "")[:300]),
+        )
+        self.conn.commit()
+
+    def agent_turns_today(self) -> int:
+        """Agent turns spent since local midnight — the USAGE GOVERNOR reads
+        this before every session so the bot can't crowd the owner's plan."""
+        start_local = to_local(utcnow(), self.tz_name).replace(
+            hour=0, minute=0, second=0, microsecond=0)
+        start = start_local.astimezone(timezone.utc).isoformat()
+        r = self.conn.execute(
+            "SELECT COALESCE(SUM(turns), 0) AS c FROM agent_usage WHERE ts >= ?",
+            (start,),
+        ).fetchone()
+        return r["c"]
 
     # ---------- state ----------
     def get_state(self, key: str, default: str = "") -> str:

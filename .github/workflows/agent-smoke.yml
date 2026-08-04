@@ -1,0 +1,36 @@
+# Agent-auth smoke test (AUTONOMY.md Phase 0).
+#
+# Proves the subscription OAuth path (CLAUDE_CODE_OAUTH_TOKEN from
+# `claude setup-token`) works for headless Claude Code in CI, BEFORE any real
+# brain (Curator/Strategist/Mechanic) depends on it. Read-only, ~2 minutes,
+# and its usage lands in the same agent_usage ledger the governor reads.
+#
+# Manual-dispatch only — run it after wiring the secret, and again whenever an
+# auth question comes up (the token can invalidate on local logout / expiry).
+name: agent-smoke
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: install Claude Code + xbot
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          pip install -e ".[turso]"
+      - name: governed read-only session
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+        run: xbot agent-smoke

@@ -1,0 +1,67 @@
+# THE CONSTITUTION — machine-readable law for the autonomy layers (AUTONOMY.md).
+#
+# PROTECTED PATH: agents may never modify this file; changes require the owner's
+# merge (enforced via CODEOWNERS + branch protection from Phase 2).
+#
+# Enforcement status per section is explicit — nothing here pretends to be
+# enforced before its enforcement mechanism ships.
+
+version: 0
+
+# ---------------------------------------------------------------- usage governor
+# ENFORCED NOW (src/xbot/agents/runner.py): checked before every agent session;
+# over the ceiling, sessions skip (fail quiet). The ceiling is ~10% of a Max-5x
+# day so the bot can never crowd the owner's own subscription window.
+# Only the owner may raise this value.
+usage_governor:
+  daily_turn_ceiling: 60
+
+# ---------------------------------------------------------------- protected paths
+# ENFORCED FROM PHASE 2 (CODEOWNERS + require-code-owner-review + the agent
+# token lacking the `workflows` permission). Any PR touching these requires the
+# owner's approving review — the agents can never edit their own gates.
+protected_paths:
+  - agent/constitution.yaml
+  - .github/workflows/
+  - .github/CODEOWNERS
+  - src/xbot/commentary/safety.py
+  - src/xbot/commentary/qa.py
+  # The pipeline route is the PERMANENT API-key fallback (owner decision
+  # 2026-08-04): agents may not delete or gut it.
+  - src/xbot/score/teaching_judge.py
+  - src/xbot/commentary/generate.py
+
+# ---------------------------------------------------------------- config bounds
+# ENFORCED FROM PHASE 2 (scripts/validate_bounds.py as a required CI check).
+# Keys not listed here are NOT strategist-mutable. `immutable` = no agent may
+# ever change it; `raise_requires_owner` = agents may lower, only the owner
+# raises.
+config_bounds:
+  posting.per_day: {immutable: true}
+  posting.per_run: {immutable: true}
+  safety: {immutable: true}
+  scoping.monthly_read_budget: {raise_requires_owner: true}
+  ranking.teaching_weight: {min: 0.5, max: 0.8, max_delta_per_week: 0.1}
+  thresholds.topic_fit_min: {min: 0.3, max: 0.7, max_delta_per_week: 0.1}
+  thresholds.quote_worthy_min: {min: 0.25, max: 0.6, max_delta_per_week: 0.1}
+  posting.windows: {constraint: "each window inside 07:00-21:00 local"}
+  posting.draft_max_age_hours: {min: 24, max: 96}
+  listsync.web_queries: {constraint: "list edits allowed; teaching-first intent"}
+  webcontent.queries: {constraint: "list edits allowed; teaching-first intent"}
+  llm.curator_model: {constraint: "sonnet-class or opus-class only"}
+
+# ---------------------------------------------------------------- change rate
+# ENFORCED FROM PHASE 2 (validate_bounds.py reads git history).
+change_rate:
+  max_config_keys_per_week: 5
+  max_self_merged_prs_per_day: 1
+  cooldown_days_after_revert: 7
+
+# ---------------------------------------------------------------- failure policy
+# The auth ladder (owner decisions 2026-08-04). Descriptive here; the behaviors
+# live in code where each failure is handled.
+failure_policy:
+  window_throttled: fail_quiet          # skip the run; next window retries
+  auth_broken: notify_owner             # go quiet; owner flips the flag
+  editorial_fallback: pipeline          # API key => OLD ROUTE, never agentic
+  mechanic_direction: reduce_only       # quieter/cheaper without approval; louder never
