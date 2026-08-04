@@ -1,0 +1,46 @@
+# Reply copilot nudge (AUTONOMY.md parallel track).
+#
+# X's Feb-2026 policy keeps replies human — the 27x growth lever runs through
+# the owner's hands. This workflow makes those hands land at the right moment:
+# at reply-optimal times it checks the DB (zero X reads) for fresh eligible
+# targets and pings the owner via a rolling issue to run `xbot reply-queue`.
+name: reply-nudge
+
+on:
+  schedule:
+    - cron: "0 16 * * 1-5"   # weekdays ~08:00/09:00 PT
+    - cron: "0 20 * * 1-5"   # weekdays ~12:00/13:00 PT
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  nudge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -e ".[turso]"
+      - name: find fresh targets (DB only)
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+        run: xbot reply-nudge
+      - name: ping owner (rolling issue)
+        if: ${{ hashFiles('data/reply_nudge.md') != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TITLE="xbot reply copilot: targets ready"
+          EXISTING=$(gh issue list --state open --search "in:title \"$TITLE\"" \
+                       --json number --jq '.[0].number' || true)
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body-file data/reply_nudge.md
+          else
+            gh issue create --title "$TITLE" --body-file data/reply_nudge.md
+          fi

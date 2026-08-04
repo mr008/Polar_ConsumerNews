@@ -43,3 +43,4 @@ jobs:
         run: |
           xbot publish
           xbot report
+          xbot detect

@@ -40,7 +40,9 @@ Two swappable boundaries keep it portable (and keep the risky parts isolated):
 
 ```
 xbot initdb | collect | score [--top N] | draft | review | publish | run
-     | reply-scan | reply-queue | snapshot | list-sync [--dry-run] | report
+     | reply-scan | reply-queue | reply-nudge | snapshot | harvest
+     | agent-smoke | detect [--json] | mechanic | curate | briefing
+     | strategist | list-sync [--dry-run] | report
 ```
 `list-sync` builds/refreshes a PRIVATE curated read-List from author yield (keep =
 ever-posted or ever-scored >= --min-qw) so collection reads only worthwhile authors

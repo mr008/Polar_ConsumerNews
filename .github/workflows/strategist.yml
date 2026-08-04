@@ -1,0 +1,50 @@
+# Weekly Strategist session (AUTONOMY.md — memo-only until Phase 4 graduates).
+#
+# Monday, after list-sync: compile the briefing pack, run a governed read-only
+# session, commit the memo to agent/memos/. The memo is the Strategist's
+# persistent memory — next week's session grades this week's predictions.
+# It PROPOSES only; applying config changes arrives with Phase 4-5 behind the
+# CI gates. Fail-quiet without CLAUDE_CODE_OAUTH_TOKEN.
+name: strategist
+
+on:
+  schedule:
+    - cron: "0 16 * * 1"     # Mondays 16:00 UTC (08:00/09:00 PT), off-peak
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  weekly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: install
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          pip install -e ".[turso]"
+      - name: memo-only session
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+        run: xbot strategist
+      - name: commit memo
+        run: |
+          if [ -n "$(git status --porcelain agent/memos/)" ]; then
+            git config user.name "xbot-strategist"
+            git config user.email "actions@users.noreply.github.com"
+            git add agent/memos/
+            git commit -m "Strategist memo ($(date -u +%F))"
+            git push
+          else
+            echo "no memo produced (session skipped or failed quiet)"
+          fi

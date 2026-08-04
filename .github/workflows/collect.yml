@@ -21,7 +21,7 @@ jobs:
         with:
           python-version: "3.13"
       - run: pip install -e ".[x,llm,turso]"
-      - name: collect -> draft -> snapshot -> reply -> report
+      - name: collect -> draft -> snapshot -> harvest -> reply -> report
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           X_API_KEY: ${{ secrets.X_API_KEY }}
@@ -35,5 +35,19 @@ jobs:
           xbot collect
           xbot draft
           xbot snapshot
+          xbot harvest
           xbot reply-scan
           xbot report
+          xbot detect
+      - name: curator shadow (no-op until CLAUDE_CODE_OAUTH_TOKEN exists)
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+        run: |
+          if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
+            npm install -g @anthropic-ai/claude-code
+            xbot curate
+          else
+            echo "curator shadow: token not configured — skipped"
+          fi

@@ -1,0 +1,51 @@
+# CI gates (AUTONOMY.md Phase 2) — the future REQUIRED checks for main.
+#
+# Once the owner enables branch protection with these as required checks (plus
+# "require review from code owners"), merging with a red suite or an
+# out-of-bounds config becomes physically impossible — for agents and humans
+# alike. The bounds check runs STRICT when the PR author is the agent
+# identity; owner PRs get the lenient mode (ranges still bind, unlisted-key
+# edits are notes).
+name: ci
+
+on:
+  pull_request: {}
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -e ".[dev]"
+      - run: python -m pytest tests/ -q
+
+  bounds:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install pyyaml
+      - name: config diff vs constitution
+        run: |
+          git show "origin/${{ github.base_ref }}:config.yaml" > /tmp/base_config.yaml \
+            || cp config.yaml /tmp/base_config.yaml
+          STRICT=""
+          case "${{ github.actor }}" in
+            *"[bot]"*) STRICT="--strict" ;;
+          esac
+          python scripts/validate_bounds.py /tmp/base_config.yaml config.yaml $STRICT

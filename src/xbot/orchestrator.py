@@ -549,7 +549,41 @@ class Orchestrator:
                              draft.full_text)
         self.repo.set_draft_status(draft_id, "posted")
         self.repo.set_candidate(post.tweet_id, "posted")
+        # Feature tag for the outcome harvester (AUTONOMY.md). Never allowed to
+        # break publishing — the post is already live at this point.
+        try:
+            self._log_features(draft, post, our_id)
+        except Exception as e:
+            print(f"  [features] tagging failed ({type(e).__name__}) — post unaffected")
         return {"tweet_id": post.tweet_id, "our_id": our_id, "author": post.author_handle}
+
+    def _log_features(self, draft: Draft, post: Post, our_id: str) -> None:
+        """Record WHAT KIND of post just went out, so harvested outcomes can be
+        attributed to editorial choices (format, hook, slot, source) later."""
+        if not our_id:
+            return  # dry-run / review modes have nothing to harvest against
+        from .models import to_local, utcnow
+        score = self.repo.get_score(post.tweet_id)
+        text = draft.full_text
+        self.repo.log_features({
+            "our_tweet_id": our_id,
+            "source_tweet_id": post.tweet_id,
+            "author_handle": post.author_handle,
+            # route: which editorial engine produced the draft. "pipeline" =
+            # judge+commentary stages; "curator" arrives with mode.editorial.
+            "route": "pipeline",
+            "kind": "web" if is_web_source(post) else "qt",
+            "format": "thread" if draft.parts else "single",
+            "parts_n": len(draft.parts or []),
+            "chars": len(text),
+            "has_question": "?" in text,
+            "hook": (draft.commentary.splitlines() or [""])[0],
+            "window_hour": to_local(utcnow(), getattr(self.repo, "tz_name", "UTC")).hour,
+            "teaching": score.quote_worthy if score else None,
+            "topic_fit": score.topic_fit if score else None,
+            "quote_score": score.quote_score if score else None,
+            "posted_at": utcnow().isoformat(),
+        })
 
     # ---------- auto-reply engine ----------
     def reply_scan(self) -> dict:
@@ -704,6 +738,112 @@ class Orchestrator:
             self.repo.set_state("own_handle", me["handle"])
         self.repo.set_state("last_snapshot_day", today)
         return {"status": "ok", "day": today, **me}
+
+    # ---------- Curator shadow (Phase 2: agentic route judged blind) ----------
+    def curate_shadow(self, limit: int = 15) -> dict:
+        """Run the Curator session over the same recent candidates the pipeline
+        saw and store its verdicts + drafts in curator_shadow — WITHOUT touching
+        the live queue. Cutover (mode.editorial: curator) is gated on this
+        shadow data showing agreement. Judged BLIND: the briefing carries no
+        pipeline scores, so agreement is a real signal, not an echo.
+
+        Fail-quiet by design: no token / no CLI / governor ceiling → no-op."""
+        import json as _json
+        if self.cfg.get("mode.curator", "off") != "shadow":
+            return {"status": "off"}
+        from .agents import run_session
+        from .models import utcnow
+
+        candidates = []
+        for p in self.repo.recent_posts(48):
+            if self.repo.has_posted(p.tweet_id) or p.is_retweet or p.is_reply:
+                continue
+            s = self.repo.get_score(p.tweet_id)
+            candidates.append((s.quote_score if s else 0.0, p))
+        candidates.sort(key=lambda t: t[0], reverse=True)
+        batch = [p for _, p in candidates[:limit]]
+        if not batch:
+            return {"status": "no_candidates"}
+
+        from pathlib import Path
+        base = Path("agent/prompts/curator.md")
+        voice = Path("agent/voice.md")
+        prompt = (
+            (base.read_text(encoding="utf-8") if base.exists() else "")
+            + "\n\nVOICE SPEC:\n"
+            + (voice.read_text(encoding="utf-8") if voice.exists() else "")
+            + "\n\nCANDIDATES (JSON):\n"
+            + _json.dumps([{
+                "tweet_id": p.tweet_id, "author": p.author_handle,
+                "followers": p.author_follower_count, "text": p.text[:600],
+            } for p in batch])
+            + "\n\nReturn ONLY a JSON array, one object per candidate: "
+            '{"tweet_id": ..., "verdict": "pick"|"skip", "teaching": 0.0-1.0, '
+            '"reason": "<=15 words", "draft": "<the post text, picks only>"}. '
+            "Pick AT MOST 3. SKIP freely — nothing pickable is a valid answer.")
+        res = run_session("curator", prompt, self.repo, allowed_tools="Read",
+                          max_turns=4,
+                          model=self.cfg.get("llm.curator_model", "") or None)
+        if res["status"] != "ok":
+            return {"status": res["status"]}
+        raw = res["result"].strip()
+        if raw.startswith("```"):
+            raw = raw.strip("`")
+            raw = raw[raw.find("["):raw.rfind("]") + 1] if "[" in raw else raw
+        try:
+            rows = _json.loads(raw)
+            assert isinstance(rows, list)
+        except Exception:
+            self.repo.log_run("agent", detail="curator: unparseable verdict JSON")
+            return {"status": "unparseable"}
+        known = {p.tweet_id for p in batch}
+        rows = [r for r in rows if isinstance(r, dict)
+                and str(r.get("tweet_id", "")) in known]
+        self.repo.log_curator_verdicts(utcnow().isoformat(), rows)
+        picks = sum(1 for r in rows if r.get("verdict") == "pick")
+        return {"status": "ok", "judged": len(rows), "picks": picks,
+                "turns": res.get("turns", 0)}
+
+    # ---------- outcome harvester (the autonomy learning substrate) ----------
+    def harvest(self) -> dict:
+        """Capture engagement snapshots of OUR OWN recent posts at fixed
+        milestones (outcomes.py). Owned reads ~$0.001 each; a post is captured
+        at most once per milestone. Runs at the end of every collect pass.
+
+        Deliberately logged with read=0: the monthly circuit breaker guards the
+        $0.005 timeline reads, and letting ~$0.001 owned reads consume that
+        budget would trade content supply for telemetry. The owned-read count
+        is carried in the run detail instead, and the per-run ceiling plus the
+        milestone windows bound the spend structurally (~15 reads/day)."""
+        from .models import parse_dt, utcnow
+        from .outcomes import (HARVEST_MAX_AGE_DAYS, HARVEST_MAX_READS_PER_RUN,
+                               due_milestone)
+        fetch = getattr(self.source, "fetch_metrics", None)
+        if fetch is None:
+            return {"status": "unsupported_source", "count": 0}
+        due: dict[str, str] = {}
+        for r in self.repo.posted_recent(within_days=HARVEST_MAX_AGE_DAYS):
+            age_h = (utcnow() - parse_dt(r["posted_at"])).total_seconds() / 3600.0
+            m = due_milestone(age_h, self.repo.outcome_milestones(r["our_tweet_id"]))
+            if m:
+                due[r["our_tweet_id"]] = m
+        ids = list(due)[:HARVEST_MAX_READS_PER_RUN]
+        if not ids:
+            return {"status": "nothing_due", "count": 0}
+        try:
+            fresh = fetch(ids)
+        except Exception as e:
+            # Fail quiet: a missed snapshot self-heals at the next open window.
+            print(f"  [harvest] fetch failed ({type(e).__name__}) — will retry next run")
+            self.repo.log_run("harvest", detail=f"fetch_failed:{type(e).__name__}")
+            return {"status": "fetch_failed", "count": 0}
+        for tid, m in fresh.items():
+            if tid in due:
+                self.repo.log_outcome(tid, due[tid], m)
+        self.repo.log_run(
+            "harvest", detail=f"owned_reads:{len(ids)} captured:{len(fresh)}")
+        return {"status": "ok", "count": len(fresh),
+                "milestones": {t: due[t] for t in fresh if t in due}}
 
     # ---------- curated read-List: auto-update ----------
     def _qualifies(self, r: dict) -> bool:
