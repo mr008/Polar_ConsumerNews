@@ -1,9 +1,10 @@
 # CLAUDE.md — xbot project guide
 
-Guidance for Claude Code working in `C:\Users\KOS\Documents\Argus\x-bot`.
-(There is an unrelated global `C:\Users\KOS\CLAUDE.md` for a Playwright workspace —
-ignore it here.) The full design rationale lives in `ARCHITECTURE.md`; this file is
-the working guide + the hard-won lessons.
+Guidance for Claude Code working in this repo (`Polar_ConsumerNews`, package
+name `xbot`). Originally developed on Windows (`C:\Users\KOS\Documents\Argus\x-bot`);
+now checked out on macOS at
+`~/Documents/projects_active26/Polar_ConsumerNews`. The full design rationale
+lives in `ARCHITECTURE.md`; this file is the working guide + the hard-won lessons.
 
 ## What this is
 
@@ -84,15 +85,54 @@ without changing who you follow; flip `scoping.source_timeline: list` + `list_id
   access via `cfg.get("ranking.teaching_weight")`.
 - `.env` = secrets ONLY, gitignored. `cli.load_dotenv()` loads it and **non-empty
   .env values override existing OS env vars** (intentional — see lesson below).
-- LLM provider is config-driven (`llm.provider`: groq|xai|gemini|anthropic|auto),
-  all OpenAI-compatible except Anthropic. Currently **Groq free tier**,
-  `llama-3.3-70b-versatile`.
+- LLM provider is config-driven (`llm.provider`: anthropic|groq|xai|gemini|openai|auto),
+  all OpenAI-compatible except Anthropic. Currently **Anthropic**
+  (`claude-sonnet-5` for commentary + judge; Groq free tier was the original
+  provider and remains a fallback option).
+- **Env var names the code actually reads** (X is OAuth 1.0a, NOT OAuth 2):
+  `X_API_KEY`, `X_API_SECRET`, `X_ACCESS_TOKEN`, `X_ACCESS_TOKEN_SECRET`,
+  `X_USER_ID`, `ANTHROPIC_API_KEY`, `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`,
+  `SEARCH_API_KEY` (Brave, list-sync only), `CLAUDE_CODE_OAUTH_TOKEN` (CI
+  curator/strategist only). Same names are the GitHub Actions repo secrets.
+- Storage backend is chosen by env: `TURSO_DATABASE_URL` set → Turso (shared
+  production state); unset → local SQLite in `data/`.
+
+## Local setup (macOS)
+
+```
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e ".[llm,x,turso,dev]"   # dry-run only needs: pip install -e ".[dev]"
+pytest                                # 139 pass, 2 skip as of 2026-09-06
+cp .env.example .env                  # then fill in keys (see below)
+```
+
+**Where each key comes from** (production copies already live as GitHub repo
+secrets; they cannot be read back — re-obtain from the provider if lost):
+- **X:** developer.x.com → Projects & Apps → the bot's app → Keys and tokens.
+  Set app permissions to Read+Write *before* generating the Access Token pair.
+  `X_USER_ID` = numeric id of the bot account (`GET /2/users/me`).
+- **Anthropic:** console.anthropic.com → API keys.
+- **Turso:** `brew install tursodatabase/tap/turso`, `turso auth login`, then
+  `turso db show <db> --url` and `turso db tokens create <db>`. Creating a *new*
+  DB starts from empty state (lost posted-history → possible re-quotes); reuse the
+  existing DB if at all possible.
+- **Brave Search:** brave.com/search/api (free 2,000 queries/mo). Optional.
+- **CLAUDE_CODE_OAUTH_TOKEN:** `claude setup-token` on a logged-in machine.
+  GitHub secret only.
+- To update a secret in CI: `gh secret set NAME` (repo `mr008/Polar_ConsumerNews`).
+
+**Local runs hit production.** With `.env` filled and `TURSO_DATABASE_URL` set,
+`xbot collect/draft/publish` read the live feed, write the shared DB, and can post
+to X (config is api/api/autonomous). For safe local experiments leave the X and
+Turso vars empty, or temporarily set `mode.source: sample` + `mode.publisher:
+dry_run` in a local, uncommitted config change.
 
 ## Lessons learned (the gotchas — read before editing)
 
 1. **Windows console is cp1252** and crashes on the UI's unicode (`•✓↱═…`). Fixed by
    reconfiguring stdout/stderr to UTF-8 in `xbot/__init__.py` (runs on import, so
-   every entry path is safe). Don't remove it.
+   every entry path is safe). Don't remove it — harmless on macOS/Linux, and CI
+   runs on ubuntu.
 2. **`.env` overrides OS env** (non-empty values win). The user had a *stale* OS
    `GROQ_API_KEY`; with the old `setdefault` behavior the dead key won. Loader now
    does `if v: os.environ[k]=v`.
@@ -124,12 +164,19 @@ without changing who you follow; flip `scoping.source_timeline: list` + `list_id
 ## Phase status
 
 - ✅ LIVE + AUTONOMOUS since 2026-06-06: api source + api publisher + Turso +
-  GitHub Actions (collect every 3h; publish 3x/day PT windows with jitter).
+  GitHub Actions. Cadence (UTC crons in `.github/workflows/`): collect every 6h
+  (was 3h; cut because metrics-refresh reads are not since_id-deduped), publish
+  3x/day PT windows with jitter, web-content 2x/day, mechanic daily, list-sync +
+  strategist weekly (Mon). All runs green as of 2026-09-06.
 - ✅ Growth overhaul (2026-06-11): mention format (no URL in main post), adaptive
   tutorial threads, hidden-link attribution reply, graded topic judge
   (threshold 0.45), smart_trim, publish-time re-vet, follower snapshots.
-- 🔧 Auto-reply engine shipped in `replies.dry_run: true` — review `reply_log`
-  for 2-3 days, then flip `dry_run: false` (caps: 3/day week 1 → 6).
+- ⚠️ Auto-reply engine: flipped to `replies.dry_run: false` on 2026-06-12, but
+  X's Feb-2026 policy now 403s replies to accounts that have not mentioned you
+  ("not allowed because you have not been mentioned…"). The engine is
+  effectively dead; `reply-nudge` (weekday copilot) is the surviving reply path.
+- ✅ Autonomy overhaul Phases 0-2 merged (senses, governor, mechanic, curator
+  shadow, strategist scaffold) — see `AUTONOMY.md`.
 
 ## Conventions
 
@@ -138,3 +185,5 @@ without changing who you follow; flip `scoping.source_timeline: list` + `list_id
 - Keep the dry-run path dependency-light (stdlib + pyyaml); lazy-import `openai`/`httpx`.
 - Run `pytest` before claiming done. Add safety golden-tests when touching filters.
 - Never commit `.env` or `data/`.
+- `.env.example` must use the exact env var names above (it once listed OAuth-2
+  names like `X_CLIENT_ID` that nothing reads — 2026-09-06 fix).
