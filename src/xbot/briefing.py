@@ -15,6 +15,13 @@ from .models import utcnow
 WINDOW_DAYS = 14
 
 
+def _row_dict(row) -> dict:
+    """sqlite3.Row has .keys(); libsql (Turso) Row has .asdict(). Support both."""
+    if hasattr(row, "asdict"):
+        return dict(row.asdict())
+    return {k: row[k] for k in row.keys()}
+
+
 def _posted_with_outcomes(repo) -> list[dict]:
     cutoff = (utcnow() - timedelta(days=WINDOW_DAYS)).isoformat()
     rows = repo.conn.execute(
@@ -33,8 +40,8 @@ def _posted_with_outcomes(repo) -> list[dict]:
             "id": tid, "author": r["author_handle"],
             "posted_pt": (r["posted_at_pt"] or "")[:16],
             "text": (r["commentary"] or "")[:400],
-            "features": {k: f[k] for k in f.keys()} if f else {},
-            "outcomes": [{k: o[k] for k in o.keys()} for o in oc],
+            "features": _row_dict(f) if f else {},
+            "outcomes": [_row_dict(o) for o in oc],
         })
     return out
 

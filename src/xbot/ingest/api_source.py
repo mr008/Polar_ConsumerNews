@@ -21,6 +21,9 @@ import os
 from ..models import Metrics, Post, utcnow
 from .normalize import normalize
 
+import re as _re
+_VALID_HANDLE = _re.compile(r"^[A-Za-z0-9_]{1,15}$")
+
 API_BASE = "https://api.x.com/2"
 
 
@@ -193,7 +196,11 @@ class ApiSourceAdapter:
         """Map @handles -> numeric user ids (up to 100/call). Cheap owned read."""
         out: dict[str, str] = {}
         session = self._session()
-        clean = [h.lstrip("@") for h in handles if h.strip()]
+        # X usernames are 1-15 chars of [A-Za-z0-9_]. Web-content sources store
+        # domains (e.g. "faceless.so") as author_handle; one such value in a
+        # batch makes /users/by return 400 for the WHOLE batch, so drop them.
+        clean = [h for h in (h.strip().lstrip("@") for h in handles)
+                 if _VALID_HANDLE.match(h)]
         for i in range(0, len(clean), 100):
             chunk = clean[i:i + 100]
             resp = session.get(f"{API_BASE}/users/by",
