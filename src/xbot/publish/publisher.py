@@ -20,6 +20,12 @@ _BULLET = re.compile(r"^\s*(?:•|\d+[\.\)])\s")
 URL_RE = re.compile(r"https?://|t\.co/|\bwww\.", re.IGNORECASE)
 
 
+class AccountError(RuntimeError):
+    """The ACCOUNT can't write (Read-only token, revoked keys, unpaid balance) —
+    not this draft's fault. The orchestrator stops the run and keeps the queue
+    instead of marking every draft failed (the 2026-09 two-week silent outage)."""
+
+
 @runtime_checkable
 class Publisher(Protocol):
     def publish(self, draft: Draft, post: Post) -> dict:

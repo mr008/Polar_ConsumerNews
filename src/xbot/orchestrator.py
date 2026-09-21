@@ -14,10 +14,27 @@ from .dedup import author_in_cooldown, is_near_duplicate
 from .ingest import SampleSource
 from .models import Draft, Post, Score, is_web_source
 from .publish import get_publisher
+from .publish.publisher import AccountError
 from .score import score_posts
 from .score.teaching_judge import get_teaching_judge, prefilter_for_judge
 from .select import select_all
 from .storage.repo import Repository
+
+
+def source_freshness(post: Post, cfg: NS) -> float:
+    """0-1 multiplier on quote_score: halves every posting.source_half_life_hours
+    of SOURCE age. The h/t lands in the author's notifications — posting while
+    their post is still live puts us in front of their audience (and them) in
+    its first hours, instead of a day later when nobody is looking. 0 = off."""
+    half = float(cfg.get("posting.source_half_life_hours", 0) or 0)
+    return 0.5 ** (post.age_hours / half) if half > 0 else 1.0
+
+
+def source_too_old(post: Post, cfg: NS) -> bool:
+    """X source past posting.max_source_age_hours — its audience moment is over.
+    Web articles are exempt (no live author audience; draft_max_age covers them)."""
+    cap = float(cfg.get("posting.max_source_age_hours", 0) or 0)
+    return cap > 0 and not is_web_source(post) and post.age_hours > cap
 
 
 def make_source(cfg: NS):
@@ -339,6 +356,8 @@ class Orchestrator:
                 break
             if post.tweet_id in drafted_ids or self.repo.has_posted(post.tweet_id):
                 continue
+            if source_too_old(post, self.cfg):
+                continue  # would expire at publish anyway — don't pay to draft it
 
             # PRE-DRAFT GATE: a cheap model rejects no-material posts (truncated
             # RTs, teasers, flexes) before the expensive commentary call. ~90% of
@@ -454,15 +473,17 @@ class Orchestrator:
         if not pending:
             return 0
         weakest_id, _, weakest_post = pending[-1]
-        ws = self.repo.get_score(weakest_post.tweet_id)
-        weakest = ws.quote_score if ws else 0.0
+        weakest = self._effective_score(weakest_post)
         for s, p in eligible:  # sorted best-first; only the top one can supersede
             if p.tweet_id in drafted_ids or self.repo.has_posted(p.tweet_id):
                 continue
-            if s.quote_score >= weakest + margin:
+            if source_too_old(p, self.cfg):
+                continue
+            cand = s.quote_score * source_freshness(p, self.cfg)
+            if cand >= weakest + margin:
                 self.repo.set_draft_status(
                     weakest_id, "superseded",
-                    f"outranked by {p.tweet_id} ({s.quote_score:.2f} vs {weakest:.2f})")
+                    f"outranked by {p.tweet_id} ({cand:.2f} vs {weakest:.2f})")
                 return 1
             break
         return 0
@@ -497,6 +518,9 @@ class Orchestrator:
                 break
             if not draft.safety_passed:
                 continue
+            if source_too_old(post, self.cfg):
+                self.repo.set_draft_status(draft_id, "stale", "source_too_old")
+                continue
             if self.repo.has_posted(post.tweet_id) or self.repo.has_posted(post.canonical_id):
                 self.repo.set_draft_status(draft_id, "duplicate")
                 continue
@@ -527,6 +551,13 @@ class Orchestrator:
                 continue
             try:
                 results.append(self._publish(draft_id, draft, post))
+            except AccountError as e:
+                # The account can't write at all — the next draft would fail the
+                # same way. Leave the queue pending and stop; the CLI exits 1.
+                failures.append({"draft_id": draft_id, "tweet_id": post.tweet_id,
+                                 "error": f"{type(e).__name__}: {e}"[:200]})
+                return {"status": "account_error", "count": len(results),
+                        "results": results, "failed": failures}
             except Exception as e:  # skip-on-failure: mark it and try the next-best draft
                 err = f"{type(e).__name__}: {e}"
                 self.repo.set_draft_status(draft_id, "failed", err[:500])
@@ -536,13 +567,16 @@ class Orchestrator:
         return {"status": status, "count": len(results), "results": results,
                 "failed": failures}
 
+    def _effective_score(self, post: Post) -> float:
+        s = self.repo.get_score(post.tweet_id)
+        return (s.quote_score if s else 0.0) * source_freshness(post, self.cfg)
+
     def _ranked_pending(self) -> list[tuple[int, Draft, Post]]:
-        """Pending drafts, best quote_score first — the queue is stored FIFO, but
-        each window should post the strongest candidate available right now."""
-        def quote_score(row) -> float:
-            s = self.repo.get_score(row[2].tweet_id)
-            return s.quote_score if s else 0.0
-        return sorted(self.repo.pending_drafts(), key=quote_score, reverse=True)
+        """Pending drafts, best freshness-adjusted quote_score first — the queue
+        is stored FIFO, but each window should post the strongest candidate
+        available right now, while its source's audience is still live."""
+        return sorted(self.repo.pending_drafts(),
+                      key=lambda row: self._effective_score(row[2]), reverse=True)
 
     def approve(self, draft_id: int) -> dict:
         row = self.repo.get_draft(draft_id)
@@ -681,6 +715,94 @@ class Orchestrator:
                            "our_id": res.get("id", "")})
         status = "replied" if posted else "no_reply"
         return {"status": status, "count": len(posted), "results": posted}
+
+    def reply_back(self) -> dict:
+        """Reply to people who replied to OUR posts. The one auto-reply path X's
+        Feb-2026 policy leaves open (they engaged us first), and the heaviest
+        ranking signal there is (author reply-back). Runs after collect."""
+        result = self._reply_back()
+        self.repo.log_run("reply_back", read=result.get("read", 0),
+                          replied=result.get("count", 0), detail=result["status"])
+        return result
+
+    def _reply_back(self) -> dict:
+        from dataclasses import replace
+        cfg = self.cfg
+        if not cfg.get("reply_back.enabled", False):
+            return {"status": "disabled", "count": 0}
+        if kill_switch_active(cfg):
+            return {"status": "killed", "count": 0}
+        fetch = getattr(self.source, "fetch_mentions", None)
+        if fetch is None:
+            return {"status": "no_source", "count": 0}
+        max_per_day = int(cfg.get("reply_back.max_per_day", 5))
+        if self.repo.count_replies_today() >= max_per_day:
+            return {"status": "cap_reached", "count": 0}
+
+        since = self.repo.get_state("mentions_since_id", "") or None
+        items, newest = fetch(since_id=since,
+                              max_results=int(cfg.get("reply_back.max_reads_per_run", 20)))
+        if newest:
+            self.repo.set_state("mentions_since_id", newest)
+
+        own_uid = str(getattr(self.source, "uid", ""))
+        max_age = float(cfg.get("reply_back.max_age_hours", 24))
+        recent_authors = self.repo.reply_authors_since(1)
+        targets, seen = [], set()
+        for it in sorted(items, key=lambda i: i["post"].created_at):  # oldest first
+            post = it["post"]
+            handle = post.author_handle.lower()
+            if (str(it.get("in_reply_to_user_id", "")) != own_uid  # not a reply to us
+                    or str(it.get("author_id", "")) == own_uid        # our own thread
+                    or post.age_hours > max_age
+                    or post.has_link                                  # spam bait
+                    or handle in seen or post.author_handle in recent_authors
+                    or self.repo.has_replied(post.tweet_id)):
+                continue
+            seen.add(handle)
+            targets.append((post, it.get("parent_text", "")))
+        if not targets:
+            return {"status": "no_targets", "count": 0, "read": len(items)}
+
+        from .commentary.reply import get_reply_back_generator
+        gen = getattr(self, "reply_back_generator", None) or get_reply_back_generator(cfg)
+        if gen is None:
+            return {"status": "no_llm", "count": 0, "read": len(items)}
+        dry = cfg.get("reply_back.dry_run", True)
+        publisher = self.publisher
+        if dry:
+            from .publish.dryrun import DryRunPublisher
+            publisher = DryRunPublisher(cfg)
+
+        budget = min(int(cfg.get("reply_back.max_per_run", 2)),
+                     max_per_day - self.repo.count_replies_today())
+        posted = []
+        for post, parent_text in targets:
+            if len(posted) >= budget:
+                break
+            # One Post carries BOTH sides: the generator reads the exchange, and
+            # the fabrication gate accepts numbers from our post or their reply.
+            ctx = replace(post, text=(f"OUR POST:\n{parent_text}\n\n"
+                                      f"THEIR REPLY (@{post.author_handle}):\n{post.text}"))
+            text, model = self._vet_reply(gen, ctx)
+            if text is None:
+                continue
+            try:
+                res = publisher.reply(text, post.tweet_id)
+            except AccountError as e:
+                self.repo.log_reply(post.tweet_id, post.author_handle, ctx.text, text,
+                                    model, "failed", f"{type(e).__name__}: {e}"[:200])
+                break  # the account can't write — don't burn the rest
+            except Exception as e:
+                self.repo.log_reply(post.tweet_id, post.author_handle, ctx.text, text,
+                                    model, "failed", f"{type(e).__name__}: {e}"[:200])
+                continue
+            self.repo.log_reply(post.tweet_id, post.author_handle, ctx.text, text, model,
+                                "dry_run" if dry else "posted", "", res.get("id", ""))
+            posted.append({"target": post.tweet_id, "author": post.author_handle,
+                           "our_id": res.get("id", ""), "text": text})
+        return {"status": "replied" if posted else "no_reply", "count": len(posted),
+                "read": len(items), "results": posted}
 
     def _vet_reply(self, gen, post: Post) -> tuple[str | None, str]:
         """check_reply + qa_reply with one revision. A blocked target is logged

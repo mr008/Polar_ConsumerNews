@@ -9,6 +9,7 @@
     xbot run           # collect -> draft -> publish (the full collector pass)
     xbot reply-scan    # auto-reply engine (DISABLED — blocked by X Feb-2026 policy)
     xbot reply-queue   # human-in-the-loop: bot drafts replies, you post them manually
+    xbot reply-back    # auto-reply to people who replied to OUR posts (policy-allowed)
     xbot snapshot      # record today's follower count (once per PT day)
     xbot harvest       # capture engagement milestones for our own recent posts
     xbot agent-smoke   # prove subscription (OAuth) agent auth works headless
@@ -149,6 +150,12 @@ def cmd_approve(args):
         print("posted -> https://x.com/i/status/" + res["our_id"])
 
 
+def publish_exit_code(result: dict) -> int:
+    """Non-zero when a window tried to post and nothing went out, so the
+    workflow goes RED (two weeks of 403s once hid behind green runs)."""
+    return 1 if result.get("status") in ("all_failed", "account_error") else 0
+
+
 def cmd_publish(args):
     orch = _setup(args)
     result = orch.publish_due()
@@ -156,6 +163,7 @@ def cmd_publish(args):
     if result.get("status") == "review_required":
         print(f"  {result['pending']} draft(s) awaiting `xbot review` "
               f"(mode.autonomous is false).")
+    return publish_exit_code(result)
 
 
 def cmd_run(args):
@@ -172,6 +180,16 @@ def cmd_reply_scan(args):
     result = orch.reply_scan()
     mode = "DRY-RUN" if orch.cfg.get("replies.dry_run", True) else "LIVE"
     print(f"reply-scan [{mode}]: {result}")
+
+
+def cmd_reply_back(args):
+    orch = _setup(args)
+    result = orch.reply_back()
+    mode = "DRY-RUN" if orch.cfg.get("reply_back.dry_run", True) else "LIVE"
+    print(f"reply-back [{mode}]: {result['status']} · {result['count']} repl"
+          f"{'y' if result['count'] == 1 else 'ies'} · {result.get('read', 0)} mention(s) read")
+    for r in result.get("results", []):
+        print(f"  ↱ @{r['author']}: {r['text']}")
 
 
 def _wrap(text: str, width: int = 62) -> list[str]:
@@ -636,6 +654,7 @@ def main(argv=None):
     sub.add_parser("publish").set_defaults(func=cmd_publish)
     sub.add_parser("run").set_defaults(func=cmd_run)
     sub.add_parser("reply-scan").set_defaults(func=cmd_reply_scan)
+    sub.add_parser("reply-back").set_defaults(func=cmd_reply_back)
     p_rq = sub.add_parser("reply-queue")
     p_rq.add_argument("--fresh", action="store_true",
                       help="pull a fresh home-feed read first, so targets are minutes old")

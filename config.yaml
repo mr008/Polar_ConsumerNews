@@ -160,6 +160,15 @@ posting:
   # per_day+1 pending drafts (one spare in case a publish fails), and anything
   # older than draft_max_age_hours expires so commentary never goes stale.
   draft_max_age_hours: 48
+  # SOURCE FRESHNESS (2026-09-21): the h/t lands in the source author's
+  # notifications, and X decides reach in a post's first ~30 min. Posting while
+  # the SOURCE is still live puts us in front of its author + audience instead of
+  # a day late. Publish ranks by quote_score * 0.5^(source_age / half_life), and
+  # an X source older than max_source_age_hours is never drafted and expires at
+  # publish (web articles exempt). Collect runs every 6h, so sources are 0-6h old
+  # when drafted. 0 disables either knob.
+  source_half_life_hours: 8
+  max_source_age_hours: 24
   # Research-backed windows (Buffer 8.7M-post study, Sprout Social, 2026): weekday
   # late-morning→afternoon in the audience's local time wins; audience spans ET→PT.
   # The publish workflow's cron fires at each window start + sleeps 0-90 random
@@ -296,6 +305,24 @@ replies:
   max_reply_chars: 240
   model: "claude-sonnet-5"     # the public voice — same as commentary
   exclude_authors: []
+
+# REPLY-BACK (2026-09-21): auto-reply to people who reply to OUR posts. This is
+# the path X's Feb-2026 policy leaves OPEN (it only blocks replies to authors who
+# haven't engaged us first — a reply to our post is that engagement), and an
+# author replying back is the heaviest ranking signal on X. Runs after collect
+# (every 6h); mentions are read with server-side since_id (~$0.005 per NEW
+# mention). Same gates as replies (check_reply + QA + SKIP) and the same kill
+# switch. Shares count_replies_today with the (dead) reply engine.
+# LIVE from day one (owner call, 2026-09-21): a dry-run logs each reply as
+# handled, so every mention seen during a dry-run week would never get a real
+# answer — too costly at this account size. Flip true to pause posting.
+reply_back:
+  enabled: true
+  dry_run: false
+  max_per_day: 5
+  max_per_run: 2               # one reply per person per run regardless
+  max_age_hours: 24            # older replies: the conversation has moved on
+  max_reads_per_run: 20
 
 growth:
   snapshot_enabled: true       # daily follower-count snapshot (~$0.001/day)

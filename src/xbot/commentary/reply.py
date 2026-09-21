@@ -83,6 +83,51 @@ class ReplyGenerator:
                 f"{self.provider}:{self.model}")
 
 
+def build_reply_back_system_prompt(cfg: NS) -> str:
+    max_chars = int(cfg.get("replies.max_reply_chars", 240))
+    return f"""You write SHORT REPLIES from a growth-operator account focused on viral consumer-app content (AI UGC, content-driven growth, distribution). Someone just replied to one of OUR posts. Replying back is how a small account turns a reader into a follower: make them glad they replied and give them a reason to reply again.
+
+The reply must do EXACTLY ONE of:
+1) Answer their question directly, using ONLY what is in our post or their reply.
+2) Add one concrete extension of the tactic that fits their situation.
+3) Ask ONE specific follow-up question about their situation or result. PREFER this when they share their own experience.
+If their reply is thin but friendly (thanks, agreement), a short warm line plus one specific question is fine.
+
+HARD RULES (never break):
+  - <= {max_chars} characters; aim for 80-180. Conversational, one thought.
+  - NO links. NO hashtags. NO @mentions. At most one emoji.
+  - NEVER invent numbers, results, or personal experiences. Use only numbers that appear in our post or their reply.
+  - NEVER open with generic praise ("great point", "love this", "so true").
+  - Never refer to yourself as an account/bot/curator, never mention replying or engagement.
+  - Write like a person mid-conversation: lowercase-casual is fine, no corporate tone.
+  - No dashes as connectors (no em dash, no en dash, no " - "). Use a comma or a period.
+  - If their reply is spam, promotion, hostile, off-topic, a bot, or only an emoji, output exactly: SKIP: <reason in <=8 words>
+
+Return ONLY the reply text (or the SKIP line) — no preamble, no quotes around it."""
+
+
+class ReplyBackGenerator(ReplyGenerator):
+    """Same provider plumbing; the prompt frames OUR post + THEIR reply (the
+    caller packs both into post.text so the safety gates see both sides)."""
+
+    def __init__(self, cfg: NS, provider: str, model: str):
+        super().__init__(cfg, provider, model)
+        self.system = build_reply_back_system_prompt(cfg)
+
+    def _user_prompt(self, post: Post) -> str:
+        return f"{post.text}\n\nWrite the reply to @{post.author_handle} now."
+
+
+def get_reply_back_generator(cfg: NS):
+    provider = cfg.get("llm.provider", "auto")
+    order = AUTO_ORDER if provider == "auto" else [provider]
+    for prov in order:
+        if prov in PROVIDERS and os.environ.get(PROVIDERS[prov]["key_env"]):
+            model = cfg.get("replies.model", "") or DEFAULT_MODEL[prov]
+            return ReplyBackGenerator(cfg, prov, model)
+    return None
+
+
 def get_reply_generator(cfg: NS):
     """Resolve provider/model like get_generator. Returns None when no key is
     available — the reply step then no-ops (replies are never template-generated;

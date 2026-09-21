@@ -21,7 +21,7 @@ jobs:
         with:
           python-version: "3.13"
       - run: pip install -e ".[x,llm,turso]"
-      - name: collect -> draft -> snapshot -> harvest -> reply -> report
+      - name: collect -> draft -> snapshot -> harvest -> reply -> reply-back -> report
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           X_API_KEY: ${{ secrets.X_API_KEY }}
@@ -37,6 +37,7 @@ jobs:
           xbot snapshot
           xbot harvest
           xbot reply-scan
+          xbot reply-back
           xbot report
           xbot detect
       - name: curator shadow (no-op until CLAUDE_CODE_OAUTH_TOKEN exists)

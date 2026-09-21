@@ -40,7 +40,12 @@ jobs:
           X_USER_ID: ${{ secrets.X_USER_ID }}
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+        # publish exits 1 when a window tried to post and nothing went out
+        # (all_failed / account_error) — still print the report + detectors,
+        # then fail the run so a dead account shows RED instead of green.
         run: |
-          xbot publish
+          rc=0
+          xbot publish || rc=$?
           xbot report
           xbot detect
+          exit $rc

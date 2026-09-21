@@ -160,6 +160,14 @@ dry_run` in a local, uncommitted config change.
    exclude RTs. The 06-10 incident started with one.
 10. **Digits in @handles, list markers, and URLs are NOT fabrication** — the
    number gate strips them first (real drafts got blocked over "@gregpr07").
+11. **Two weeks of silent non-posting (2026-09-06 → 09-21).** The X secrets were
+   re-set with an Access Token generated while the app was Read-only → every
+   `POST /2/tweets` 403'd ("oauth1 app permissions"), each draft was marked
+   `failed` (burning the queue every window), and `xbot publish` still exited 0,
+   so runs stayed green. Now: account-level errors (401/402/permission-403) raise
+   `AccountError` → the run stops, the queue stays pending, `publish` exits 1 and
+   the workflow goes RED. Per-draft 403s (duplicate, reply limits) still skip.
+   A 402 on reads = pay-per-use balance exhausted (collect went red 09-19).
 
 ## Phase status
 

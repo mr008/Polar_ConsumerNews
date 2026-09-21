@@ -53,9 +53,10 @@ def detect_budget_near_limit(repo, cfg) -> dict | None:
 
 
 def detect_publish_failing(repo, cfg) -> dict | None:
-    """Publish runs erroring: any all_failed, or repeated failure details."""
+    """Publish runs erroring: any all_failed / account_error window."""
     runs = _runs(repo, "publish", 26)
-    bad = [r for r in runs if "all_failed" in (r["detail"] or "")]
+    bad = [r for r in runs
+           if any(s in (r["detail"] or "") for s in ("all_failed", "account_error"))]
     if not bad:
         return None
     return {"detector": "publish_failing", "severity": "high",

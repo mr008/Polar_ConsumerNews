@@ -120,6 +120,77 @@ def test_all_failed_reports_without_crashing(tmp_path):
     assert result["count"] == 0
 
 
+def test_account_error_stops_run_without_burning_queue(tmp_path):
+    """The 2026-09 outage: a Read-only Access Token 403'd EVERY draft, each got
+    marked failed, and the run still exited green for two weeks. An account-level
+    error is not the draft's fault — stop, keep the queue, report loudly."""
+    from xbot.publish.publisher import AccountError
+
+    class _DeadAccount(_FakePublisher):
+        def publish(self, draft, post):
+            self.published.append(post.tweet_id)     # records ATTEMPTS here
+            raise AccountError("403 oauth1 app permissions")
+
+    repo = _repo()
+    _queue(repo, "1", quote_score=0.9)
+    _queue(repo, "2", quote_score=0.5)
+    pub = _DeadAccount()
+    result = _orch(tmp_path, repo, pub).publish_due()
+    assert result["status"] == "account_error"
+    assert pub.published == ["1"]                     # one attempt, then stop
+    assert len(repo.pending_drafts()) == 2            # queue intact for the fix
+    runs = [r for r in repo.recent_runs(1) if r["kind"] == "publish"]
+    assert "account_error" in runs[0]["detail"]
+
+
+def test_api_publisher_classifies_account_level_errors(monkeypatch):
+    for k in ("X_API_KEY", "X_API_SECRET", "X_ACCESS_TOKEN", "X_ACCESS_TOKEN_SECRET"):
+        monkeypatch.setenv(k, "test-key")
+    import pytest
+    from xbot.publish.api_publisher import ApiPublisher
+    from xbot.publish.publisher import AccountError
+
+    class _Resp:
+        def __init__(self, status_code, text):
+            self.status_code, self.text = status_code, text
+
+    class _Session:
+        def __init__(self, resp):
+            self.resp = resp
+
+        def post(self, *a, **kw):
+            return self.resp
+
+    pub = ApiPublisher(NS({}))
+    perm = ('{"detail":"Your client app is not configured with the appropriate '
+            'oauth1 app permissions for this endpoint."}')
+    for resp in (_Resp(403, perm), _Resp(401, "Unauthorized"),
+                 _Resp(402, "Payment Required")):
+        with pytest.raises(AccountError):
+            pub._post(_Session(resp), {"text": "hi"})
+    # a per-draft 403 (duplicate content) must stay skippable, not account-level
+    with pytest.raises(RuntimeError) as ei:
+        pub._post(_Session(_Resp(403, "duplicate content")), {"text": "hi"})
+    assert not isinstance(ei.value, AccountError)
+
+
+def test_publish_failing_detector_sees_account_error(tmp_path):
+    from xbot.detectors import detect_publish_failing
+    repo = _repo()
+    repo.log_run("publish", posted=0, detail="account_error | draft #1: 403")
+    trip = detect_publish_failing(repo, _cfg(tmp_path))
+    assert trip and trip["severity"] == "high"
+
+
+def test_cmd_publish_exit_code_reflects_failure():
+    from xbot.cli import publish_exit_code
+    assert publish_exit_code({"status": "posted"}) == 0
+    assert publish_exit_code({"status": "queue_empty"}) == 0
+    assert publish_exit_code({"status": "cap_reached"}) == 0
+    assert publish_exit_code({"status": "all_failed"}) == 1
+    assert publish_exit_code({"status": "account_error"}) == 1
+
+
 def test_daily_cap_and_review_gate(tmp_path):
     repo = _repo()
     for tid in ("1", "2", "3", "4"):
@@ -152,6 +223,50 @@ def test_stale_draft_expires_instead_of_posting(tmp_path):
     assert result["status"] == "posted"
     assert pub.published == ["2"]                      # stale winner never posts
     assert [tid for tid, _, _ in repo.pending_drafts()] == []
+
+
+def _queue_aged_source(repo, tid, quote_score, source_age_hours):
+    """A fresh draft whose SOURCE post is source_age_hours old (upsert_post
+    never rewrites created_at, so the aged post must be the first insert)."""
+    p = _post(tid)
+    p.created_at = utcnow() - timedelta(hours=source_age_hours)
+    repo.upsert_post(p)
+    _queue(repo, tid, quote_score=quote_score)
+
+
+_FRESH = {"posting": {"per_day": 3, "per_run": 1,
+                      "source_half_life_hours": 6, "max_source_age_hours": 30}}
+
+
+def test_fresh_source_beats_slightly_better_stale_one(tmp_path):
+    # Post into the author's audience while it's live: a 1h-old source at 0.6
+    # outranks an 18h-old source at 0.8 (0.8 * 0.5^3 = 0.1 < 0.6 * 0.89).
+    repo = _repo()
+    _queue_aged_source(repo, "old", quote_score=0.8, source_age_hours=18)
+    _queue_aged_source(repo, "new", quote_score=0.6, source_age_hours=1)
+    pub = _FakePublisher()
+    _orch(tmp_path, repo, pub, extra=_FRESH).publish_due()
+    assert pub.published == ["new"]
+
+
+def test_source_past_max_age_expires_at_publish(tmp_path):
+    repo = _repo()
+    _queue_aged_source(repo, "cold", quote_score=0.9, source_age_hours=40)
+    pub = _FakePublisher()
+    result = _orch(tmp_path, repo, pub, extra=_FRESH).publish_due()
+    assert pub.published == []
+    assert result["status"] == "queue_empty"
+    stale = repo.activity_drafts(["stale"], 1)
+    assert stale and stale[0]["note"] == "source_too_old"
+
+
+def test_freshness_off_by_default_keeps_pure_quote_score(tmp_path):
+    repo = _repo()
+    _queue_aged_source(repo, "old", quote_score=0.8, source_age_hours=40)
+    _queue_aged_source(repo, "new", quote_score=0.6, source_age_hours=1)
+    pub = _FakePublisher()
+    _orch(tmp_path, repo, pub).publish_due()
+    assert pub.published == ["old"]
 
 
 def test_expire_stale_drafts_repo_counts(tmp_path):

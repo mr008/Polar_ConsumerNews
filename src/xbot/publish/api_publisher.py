@@ -15,10 +15,28 @@ from __future__ import annotations
 import os
 
 from ..models import Draft, Post
-from .publisher import (URL_RE, attribution_text, compose_text,
+from .publisher import (URL_RE, AccountError, attribution_text, compose_text,
                         wants_attribution_reply)
 
 API_BASE = "https://api.x.com/2"
+
+
+def _raise_if_account_error(resp) -> None:
+    """401 (bad/revoked keys), 402 (pay-per-use balance) and the app-permission
+    403 fail EVERY write — raise AccountError so the run stops instead of
+    burning the queue. Per-draft 403s (duplicate, reply/quote limits) fall through."""
+    code, body = resp.status_code, resp.text[:300]
+    if code == 401:
+        raise AccountError("401 from POST /2/tweets — X keys/tokens are invalid or "
+                           "revoked; regenerate and update the secrets.\n" + body)
+    if code == 402:
+        raise AccountError("402 from POST /2/tweets — X pay-per-use balance is "
+                           "exhausted; top up credits in the developer portal.\n" + body)
+    if code == 403 and "app permission" in body.lower():
+        raise AccountError(
+            "403 from POST /2/tweets — the Access Token is Read-only. Set the app "
+            "to 'Read and Write', THEN regenerate the Access Token + Secret and "
+            "update the secrets.\n" + body)
 
 
 class ApiPublisher:
@@ -35,6 +53,7 @@ class ApiPublisher:
 
     def _post(self, session, payload: dict) -> dict:
         resp = session.post(f"{API_BASE}/tweets", json=payload, timeout=30)
+        _raise_if_account_error(resp)
         if resp.status_code == 403:
             # RuntimeError (not SystemExit) so the orchestrator can skip to the
             # next-best draft instead of the whole run dying.
@@ -126,6 +145,7 @@ class ApiPublisher:
             resp = session.post(f"{API_BASE}/tweets",
                                 json={"text": draft.commentary}, timeout=30)
             quoted = False
+        _raise_if_account_error(resp)
         if resp.status_code == 403:
             raise RuntimeError(
                 "403 from POST /2/tweets — the app behind your Access Token is likely "

@@ -191,6 +191,37 @@ class ApiSourceAdapter:
                  if not (p.is_retweet or p.is_reply)]   # belt-and-suspenders
         return posts[:max_posts], len(batch)
 
+    def fetch_mentions(self, since_id: str | None = None, max_results: int = 20
+                       ) -> tuple[list[dict], str]:
+        """Posts mentioning us — which includes every reply to our posts — for
+        reply-back. since_id is server-side, so a quiet account pays ~nothing.
+        Returns (items, newest_id); each item carries the reply as a Post plus
+        who it replies to and the text of the post it replies to (our post)."""
+        session = self._session()
+        params = {"max_results": min(100, max(5, max_results)),
+                  "tweet.fields": ("created_at,public_metrics,lang,referenced_tweets,"
+                                   "entities,in_reply_to_user_id,author_id"),
+                  "expansions": "author_id,referenced_tweets.id",
+                  "user.fields": "public_metrics,username,name"}
+        if since_id:
+            params["since_id"] = since_id
+        resp = session.get(f"{API_BASE}/users/{self.uid}/mentions",
+                           params=params, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+        users = {u["id"]: u for u in data.get("includes", {}).get("users", [])}
+        parents = {t["id"]: t.get("text", "")
+                   for t in data.get("includes", {}).get("tweets", [])}
+        items = []
+        for t in data.get("data", []):
+            parent_id = next((r.get("id") for r in t.get("referenced_tweets", []) or []
+                              if r.get("type") == "replied_to"), None)
+            items.append({"post": self._to_post(t, users),
+                          "author_id": t.get("author_id", ""),
+                          "in_reply_to_user_id": t.get("in_reply_to_user_id", ""),
+                          "parent_text": parents.get(parent_id, "")})
+        return items, data.get("meta", {}).get("newest_id", "")
+
     # ---------------- List administration (auto-update + setup) ---------------
     def resolve_user_ids(self, handles: list[str]) -> dict[str, str]:
         """Map @handles -> numeric user ids (up to 100/call). Cheap owned read."""
