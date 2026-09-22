@@ -16,7 +16,7 @@ import os
 import re
 from typing import Protocol
 
-from ..commentary.generate import AUTO_ORDER, PROVIDERS
+from ..commentary.generate import AUTO_ORDER, PROVIDERS, LLMUnavailable
 from ..commentary.safety import classify_source
 from ..config import NS
 from ..models import Post
@@ -171,8 +171,8 @@ def get_teaching_judge(cfg: NS) -> TeachingJudge:
     for prov in order:
         if prov in PROVIDERS and os.environ.get(PROVIDERS[prov]["key_env"]):
             return LLMTeachingJudge(cfg, prov)
-    raise SystemExit(
-        "No LLM provider key found. The semantic judge is required (no lexical "
-        "fallback). Set one of GROQ_API_KEY / XAI_API_KEY / GEMINI_API_KEY / "
-        "OPENAI_API_KEY in .env and llm.provider in config.yaml."
-    )
+    env = PROVIDERS[provider]["key_env"] if provider in PROVIDERS else "an LLM API key"
+    raise LLMUnavailable(
+        f"{env} is missing (llm.provider={provider}). The semantic judge is "
+        f"required (no lexical fallback). Restore it (GitHub: `gh secret set {env}`; "
+        f"local: .env) and re-run.")

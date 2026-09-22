@@ -51,7 +51,9 @@ def _qa_call(system: str, user: str, cfg: NS, fail_open: bool,
     chosen = next((p for p in order
                    if p in PROVIDERS and os.environ.get(PROVIDERS[p]["key_env"])), None)
     if chosen is None:
-        return True, ""  # offline — deterministic gates already ran
+        # No key: at draft time (fail-open) the deterministic gates already ran;
+        # at PUBLISH time an unreviewable draft must not go out.
+        return (True, "") if fail_open else (False, "qa_unavailable")
 
     try:
         from openai import OpenAI  # lazy import

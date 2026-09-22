@@ -315,6 +315,31 @@ class AnthropicGenerator:
         return Draft(tweet_id=post.tweet_id, commentary=hook, parts=parts, model=self.model)
 
 
+class LLMUnavailable(RuntimeError):
+    """No LLM key while the bot is LIVE. get_generator would silently fall back
+    to the offline template, and the QA gate treats "no key" as offline and
+    passes — so template text could publish. Stop loudly instead."""
+
+
+def llm_key_available(cfg: NS) -> bool:
+    provider = cfg.get("llm.provider", "auto")
+    order = AUTO_ORDER if provider == "auto" else [provider]
+    return any(p in PROVIDERS and os.environ.get(PROVIDERS[p]["key_env"]) for p in order)
+
+
+def require_llm_if_live(cfg: NS) -> None:
+    """Raise LLMUnavailable when mode.publisher is api and no LLM key resolves.
+    Offline sample/dry_run runs keep the template fallback."""
+    if cfg.get("mode.publisher", "") == "api" and not llm_key_available(cfg):
+        provider = cfg.get("llm.provider", "auto")
+        env = (PROVIDERS[provider]["key_env"] if provider in PROVIDERS
+               else "an LLM API key")
+        raise LLMUnavailable(
+            f"{env} is missing but mode.publisher is 'api' (LIVE). Refusing to "
+            f"draft/publish with the offline template generator. Restore the key "
+            f"(GitHub: `gh secret set {env}`; local: .env) and re-run.")
+
+
 def get_generator(cfg: NS) -> CommentaryGenerator:
     provider = cfg.get("llm.provider", "auto")
     model = cfg.get("llm.commentary_model", "")

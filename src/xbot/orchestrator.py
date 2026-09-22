@@ -9,6 +9,8 @@ from __future__ import annotations
 import os
 
 from .commentary import check_commentary, get_generator, get_prescreen
+from .commentary.generate import (LLMUnavailable, llm_key_available,
+                                 require_llm_if_live)
 from .config import NS, kill_switch_active
 from .dedup import author_in_cooldown, is_near_duplicate
 from .ingest import SampleSource
@@ -330,6 +332,7 @@ class Orchestrator:
         return len(fresh)
 
     def make_drafts(self, limit: int | None = None) -> list[dict]:
+        require_llm_if_live(self.cfg)  # never draft LIVE posts from the template
         posts, scores = self.score()
         score_map = {s.tweet_id: s for s in scores}
         eligible, skipped = select_all(posts, score_map, self.cfg, self.repo)
@@ -506,6 +509,9 @@ class Orchestrator:
             return {"status": "cap_reached", "posted_today": self.repo.count_posted_today()}
         if not self.cfg.get("mode.autonomous", False):
             return {"status": "review_required", "pending": len(self.repo.pending_drafts())}
+        if self.cfg.get("mode.publisher", "") == "api" and not llm_key_available(self.cfg):
+            # The publish-time QA re-vet can't run: stop with the queue intact.
+            return {"status": "llm_unavailable", "count": 0, "results": [], "failed": []}
         # Each scheduled window posts ONE draft (3 windows/day); per_day stays the
         # hard cap so a manual re-run can't overshoot.
         self.repo.expire_stale_drafts(self.cfg.get("posting.draft_max_age_hours", 48))
@@ -735,6 +741,7 @@ class Orchestrator:
         fetch = getattr(self.source, "fetch_mentions", None)
         if fetch is None:
             return {"status": "no_source", "count": 0}
+        require_llm_if_live(cfg)
         max_per_day = int(cfg.get("reply_back.max_per_day", 5))
         if self.repo.count_replies_today() >= max_per_day:
             return {"status": "cap_reached", "count": 0}

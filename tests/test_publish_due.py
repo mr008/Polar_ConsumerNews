@@ -557,3 +557,52 @@ def test_report_activity_log(tmp_path):
     assert len(activity["problems"]) == 1
     assert activity["problems"][0]["status"] == "failed"
     assert "403 simulated" in activity["problems"][0]["note"]
+
+
+# ---------------- missing LLM key while LIVE (template drafts must never post) ----------------
+
+def _no_llm_keys(monkeypatch):
+    from xbot.commentary.generate import PROVIDERS
+    for p in PROVIDERS.values():
+        monkeypatch.delenv(p["key_env"], raising=False)
+
+
+_LIVE = {"mode": {"autonomous": True, "publisher": "api"}}
+
+
+def test_live_draft_without_llm_key_stops(tmp_path, monkeypatch):
+    import pytest
+    from xbot.commentary.generate import LLMUnavailable
+    _no_llm_keys(monkeypatch)
+    orch = _orch(tmp_path, _repo(), extra=_LIVE)
+    with pytest.raises(LLMUnavailable):
+        orch.make_drafts()
+
+
+def test_live_publish_without_llm_key_stops_and_exits_nonzero(tmp_path, monkeypatch):
+    from xbot.cli import publish_exit_code
+    _no_llm_keys(monkeypatch)
+    repo = _repo()
+    _queue(repo, "1", quote_score=0.9)
+    pub = _FakePublisher()
+    result = _orch(tmp_path, repo, pub, extra=_LIVE).publish_due()
+    assert result["status"] == "llm_unavailable"
+    assert pub.published == []
+    assert len(repo.pending_drafts()) == 1          # queue untouched for when the key is back
+    assert publish_exit_code(result) == 1
+
+
+def test_publish_time_qa_fails_closed_without_key(monkeypatch):
+    from xbot.commentary.qa import qa_commentary
+    _no_llm_keys(monkeypatch)
+    cfg = NS({"ranking": {"qa_gate": True}, "llm": {"provider": "anthropic"}})
+    assert qa_commentary(_post("1"), "a take", cfg, fail_open=False) == (False, "qa_unavailable")
+    assert qa_commentary(_post("1"), "a take", cfg, fail_open=True) == (True, "")
+
+
+def test_offline_dry_run_still_works_without_key(tmp_path, monkeypatch):
+    # sample/dry_run (no mode.publisher=api) keeps the dependency-light offline path
+    _no_llm_keys(monkeypatch)
+    repo = _repo()
+    _queue(repo, "1", quote_score=0.9)
+    assert _orch(tmp_path, repo).publish_due()["status"] == "posted"

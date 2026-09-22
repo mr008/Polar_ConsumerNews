@@ -168,6 +168,11 @@ dry_run` in a local, uncommitted config change.
    `AccountError` → the run stops, the queue stays pending, `publish` exits 1 and
    the workflow goes RED. Per-draft 403s (duplicate, reply limits) still skip.
    A 402 on reads = pay-per-use balance exhausted (collect went red 09-19).
+12. **A missing LLM key must STOP, never degrade.** `get_generator` falls back to an
+   offline template and QA treats "no key" as offline → template text could
+   publish. With `mode.publisher: api`, a missing key raises `LLMUnavailable`
+   (draft/publish/reply-back exit 2, `::error` annotation, run goes RED) and
+   publish-time QA fails closed. Offline sample/dry_run keeps the template path.
 
 ## Phase status
 
@@ -175,7 +180,8 @@ dry_run` in a local, uncommitted config change.
   GitHub Actions. Cadence (UTC crons in `.github/workflows/`): collect every 6h
   (was 3h; cut because metrics-refresh reads are not since_id-deduped), publish
   3x/day PT windows with jitter, web-content 2x/day, mechanic daily, list-sync +
-  strategist weekly (Mon). All runs green as of 2026-09-06.
+  strategist weekly (Mon). Down 09-06→09-21 (read-only token + unpaid
+  balance, lesson 11); all green again as of 2026-09-21.
 - ✅ Growth overhaul (2026-06-11): mention format (no URL in main post), adaptive
   tutorial threads, hidden-link attribution reply, graded topic judge
   (threshold 0.45), smart_trim, publish-time re-vet, follower snapshots.
@@ -183,6 +189,10 @@ dry_run` in a local, uncommitted config change.
   X's Feb-2026 policy now 403s replies to accounts that have not mentioned you
   ("not allowed because you have not been mentioned…"). The engine is
   effectively dead; `reply-nudge` (weekday copilot) is the surviving reply path.
+- ✅ Growth pass (2026-09-21): point-of-view voice (`agent/voice.md`), source
+  freshness ranking (`posting.source_half_life_hours` / `max_source_age_hours`),
+  and **`xbot reply-back`** (LIVE, runs in collect): auto-replies to people who
+  replied to OUR posts — the reply path the X policy still allows.
 - ✅ Autonomy overhaul Phases 0-2 merged (senses, governor, mechanic, curator
   shadow, strategist scaffold) — see `AUTONOMY.md`.
 

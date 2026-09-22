@@ -56,7 +56,7 @@ def detect_publish_failing(repo, cfg) -> dict | None:
     """Publish runs erroring: any all_failed / account_error window."""
     runs = _runs(repo, "publish", 26)
     bad = [r for r in runs
-           if any(s in (r["detail"] or "") for s in ("all_failed", "account_error"))]
+           if any(s in (r["detail"] or "") for s in ("all_failed", "account_error", "llm_unavailable"))]
     if not bad:
         return None
     return {"detector": "publish_failing", "severity": "high",

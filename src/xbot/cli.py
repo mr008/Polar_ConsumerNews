@@ -22,6 +22,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from .commentary.generate import LLMUnavailable
 from .config import db_path, load_config
 from .orchestrator import Orchestrator
 from .storage import get_repository
@@ -153,7 +154,8 @@ def cmd_approve(args):
 def publish_exit_code(result: dict) -> int:
     """Non-zero when a window tried to post and nothing went out, so the
     workflow goes RED (two weeks of 403s once hid behind green runs)."""
-    return 1 if result.get("status") in ("all_failed", "account_error") else 0
+    return 1 if result.get("status") in ("all_failed", "account_error",
+                                         "llm_unavailable") else 0
 
 
 def cmd_publish(args):
@@ -685,6 +687,11 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         return args.func(args)
+    except LLMUnavailable as e:
+        # Flag + stop: a non-zero exit turns the workflow RED (GitHub emails it).
+        print(f"✗ STOPPED — LLM key missing: {e}", file=sys.stderr)
+        print(f"::error title=LLM key missing::{e}")
+        return 2
     finally:
         # libsql's sync client keeps a non-daemon thread alive; close it so we exit.
         try:
