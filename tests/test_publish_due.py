@@ -269,6 +269,36 @@ def test_freshness_off_by_default_keeps_pure_quote_score(tmp_path):
     assert pub.published == ["old"]
 
 
+def test_web_brief_yields_to_comparable_x_post(tmp_path):
+    # Web briefs ping no author, so they only win a window when no comparable
+    # X post is waiting: 0.8 * 0.5 = 0.4 < 0.6.
+    repo = _repo()
+    _queue(repo, "web:abc", quote_score=0.8, handle="blog.com")
+    _queue(repo, "x1", quote_score=0.6)
+    pub = _FakePublisher()
+    _orch(tmp_path, repo, pub,
+          extra={"webcontent": {"rank_multiplier": 0.5}}).publish_due()
+    assert pub.published == ["x1"]
+
+
+def test_web_brief_still_publishes_when_queue_has_no_x_post(tmp_path):
+    repo = _repo()
+    _queue(repo, "web:abc", quote_score=0.8, handle="blog.com")
+    pub = _FakePublisher()
+    _orch(tmp_path, repo, pub,
+          extra={"webcontent": {"rank_multiplier": 0.5}}).publish_due()
+    assert pub.published == ["web:abc"]
+
+
+def test_web_rank_multiplier_off_by_default(tmp_path):
+    repo = _repo()
+    _queue(repo, "web:abc", quote_score=0.8, handle="blog.com")
+    _queue(repo, "x1", quote_score=0.6)
+    pub = _FakePublisher()
+    _orch(tmp_path, repo, pub).publish_due()
+    assert pub.published == ["web:abc"]
+
+
 def test_expire_stale_drafts_repo_counts(tmp_path):
     repo = _repo()
     _queue(repo, "1", quote_score=0.5, age_hours=60)
