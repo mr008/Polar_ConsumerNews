@@ -575,7 +575,12 @@ class Orchestrator:
 
     def _effective_score(self, post: Post) -> float:
         s = self.repo.get_score(post.tweet_id)
-        return (s.quote_score if s else 0.0) * source_freshness(post, self.cfg)
+        score = (s.quote_score if s else 0.0) * source_freshness(post, self.cfg)
+        if is_web_source(post):
+            # No h/t = no author notification = no borrowed audience; web briefs
+            # fill a window only when no comparable X post is waiting.
+            score *= float(self.cfg.get("webcontent.rank_multiplier", 1.0))
+        return score
 
     def _ranked_pending(self) -> list[tuple[int, Draft, Post]]:
         """Pending drafts, best freshness-adjusted quote_score first — the queue

@@ -21,18 +21,18 @@ from ..commentary.safety import classify_source
 from ..config import NS
 from ..models import Post
 
-JUDGE_SYSTEM = """You are a strict editorial judge for an account that teaches people how to make viral CONSUMER-APP content (AI UGC, product, growth, marketing, distribution, indie startups, builder tools).
+JUDGE_SYSTEM = """You are a strict editorial judge for an account that teaches people how to GROW CONSUMER APPS, backed by real numbers (AI UGC, creator ops, content + paid distribution, monetization).
 
 For each post return TWO things:
 
-1) topic_fit (0.0-1.0): how squarely is it about BUILDING or GROWING consumer apps / software products?
-- 0.8-1.0: squarely on-topic — AI & AI-UGC, app growth, marketing, distribution, content tactics, indie hacking, startups, app revenue/MRR, AI/dev tools for builders.
-- 0.4-0.7: adjacent but useful — general marketing/creator-economy/audience-building tactics a consumer-app builder could apply, general AI tooling.
-- 0.0-0.3: unrelated — sports, fitness/bodybuilding, politics, personal life, crypto trading, random chatter.
-Judge by MEANING, not keywords — "build a voice agent", "$100k MRR", "AI influencer", "Codex client", "RevenueCat" are all squarely on-topic even with no obvious keyword.
+1) topic_fit (0.0-1.0): how squarely is it about GROWING a consumer app?
+- 0.8-1.0: squarely on-topic — UGC & AI-UGC, creator/influencer ops, hooks & short-form formats, organic-to-paid playbooks, app store / platform policy changes, paywalls, pricing, churn & subscription monetization, app revenue/MRR breakdowns that show the method.
+- 0.4-0.6: adjacent but useful — general marketing/creator-economy/audience-building tactics a consumer-app builder could apply, B2B/SaaS growth.
+- 0.0-0.3: off-focus — generic founder/startup/productivity/management advice (speed, focus, fundraising, "ship fast"), AI coding / dev-tool / infra workflows, hype, sports, fitness, politics, personal life, crypto trading, random chatter.
+Judge by MEANING, not keywords — "$100k MRR app", "AI influencer", "RevenueCat", "paywall test" are squarely on-topic even with no obvious keyword; a post about building software is NOT on-topic unless it is about growing or monetizing the app.
 
-2) score (0.0-1.0): TEACHING VALUE — how much someone building a consumer app would actually LEARN a real, applicable practice. Popularity/engagement is NOT teaching value.
-- 0.7-1.0: specific, actionable method; concrete steps; non-obvious insight; a real tactic.
+2) score (0.0-1.0): TEACHING VALUE — how much someone growing a consumer app would actually LEARN a real, applicable practice. Popularity/engagement is NOT teaching value.
+- 0.7-1.0: specific, actionable method; concrete steps; non-obvious insight; a real tactic. Best of all: a hard number AND the move behind it.
 - 0.4-0.6: a real point, but generic or lightly developed.
 - 0.0-0.3: vague inspiration, hype/flex with no method, or off-topic.
 

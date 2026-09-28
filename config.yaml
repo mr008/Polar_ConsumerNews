@@ -103,6 +103,26 @@ ranking:
     - text: "save this for when you overthink your marketing — millions of views from reusing the same AI image. the opportunity is right there."
       verdict: good
       why: "real distribution insight (content reuse) under casual framing — reward it"
+    # 2026-09-25: labels from our own posts' outcomes (GOOD = top by views/likes,
+    # BAD = the bottom — generic advice and dev-tool chatter found no audience).
+    - text: "Same content on TikTok, YouTube and Instagram. TikTok ads and Meta ads running at the same time. Organic tells you which creative wins, paid buys more of that exact one."
+      verdict: good
+      why: "concrete organic-to-paid playbook for app growth"
+    - text: "32.2% of Google Play subscription cancellations are billing errors, vs 15.2% on the App Store. That's nearly 1 in 3 cancellations — one of the rare growth problems you can fix in an hour."
+      verdict: good
+      why: "hard number + fixable monetization lever"
+    - text: "Where to market: SaaS → X. B2B → LinkedIn. Mobile App → TikTok organic. E-commerce → Instagram + TikTok. Course creator → YouTube + X."
+      verdict: good
+      why: "specific channel-fit map a consumer-app builder can act on"
+    - text: "smooth flow > maximal throughput. throughput will start increasing by eliminating frictions that improve the flow of features"
+      verdict: bad
+      why: "generic eng-management advice, not app growth"
+    - text: "Speed is the core competitive variable. Rate of iteration beats quality of any single decision. Capital, talent, and equipment can all be acquired. Calendar time can't."
+      verdict: bad
+      why: "generic founder platitude, no growth method"
+    - text: "Humans debug one guess at a time. The agent can come up with all potential causes at once, instrument the code and execute it once to figure out which one caused it."
+      verdict: bad
+      why: "AI coding workflow — off-focus for consumer-app growth"
 
 scoring_weights:               # ENGAGEMENT composite (the secondary signal).
   # Favors under-distributed gems (eng/follower) and multiple trusted shares (echo)
@@ -125,16 +145,18 @@ thresholds:
 recency_tau_hours: 8
 
 topics:
-  focus: viral_consumer_app_content
+  # 2026-09-25: narrowed to consumer-app growth with numbers. Generic
+  # startup/founder advice was the worst-performing content; the real topic
+  # gate is the judge rubric (teaching_judge.JUDGE_SYSTEM) + judge_examples.
+  focus: consumer_app_growth
   include:
     - ai ugc
-    - content marketing
+    - creator ops
     - viral content
     - app growth
     - distribution
     - consumer apps
-    - product
-    - startups
+    - monetization
   keywords:                    # cheap offline topic-fit signal (real version uses embeddings/LLM)
     - ugc
     - viral
@@ -143,15 +165,19 @@ topics:
     - marketing
     - growth
     - app
-    - product
-    - startup
-    - founder
+    - creators
+    - ads
     - launch
     - distribution
     - hook
     - algorithm
     - retention
     - acquisition
+    - paywall
+    - pricing
+    - churn
+    - subscription
+    - app store
 
 posting:
   per_day: 3                   # hard daily cap (publish_due re-checks posted_log)
@@ -217,8 +243,12 @@ webcontent:
   queries:                       # tactical, teaching-first — each is one free search
     - "how to make viral AI UGC video ads tactics guide"
     - "consumer app growth distribution playbook 2026"
-    - "short form video hook writing formula guide"
-    - "build in public growth tactics thread"
+    - "mobile app paywall pricing test results subscription churn"
+    - "UGC creator program app installs case study"
+  # Web briefs carry no h/t, so they reach no one's notifications: they averaged
+  # 5.6 views vs 18 for X-sourced posts (2026-09 review). Multiplies their
+  # publish rank so they fill a window only when no comparable X post waits.
+  rank_multiplier: 0.5
   results_per_query: 15          # search hits scanned per query (free)
   max_new_per_run: 3             # cap NEW articles summarized per run (cost guard)
   min_article_chars: 400         # below this, fall back to the search snippet
