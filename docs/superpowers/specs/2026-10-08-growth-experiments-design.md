@@ -186,36 +186,48 @@ measure on top of it. The strategist grades it like a period test (median
 Rules (go into `agent/voice.md`, replacing the "compact breakdown" format;
 the embedded fallback prompt in `generate.py` is updated to stay byte-identical):
 
-1. **Explain, don't compress.** Say what the thing is; no ad-buyer or growth
-   shorthand. A banned-term list (`CPT`, `CAC`, `PMF`, `channel` as a noun,
-   `kill`, `creative` as a noun, `LTV`, `ROAS`, `UGC` unless spelled out) is
-   enforced in QA as a hard FORMAT check.
-2. **Tiny story, not a list:** who did it, what they found, the rule, why it
-   matters. No `•`/`-` bullets; one idea per line; blank line between
+1. **One point per post, explained fully.** The source may have several
+   tips; the post teaches ONE, end to end. The generator picks the single
+   most concrete, surprising one. (Owner, 2026-10-08: "no need to cover every
+   point.") Other points can become later posts only if the source is
+   re-drafted, which dedupe currently prevents; accepted.
+2. **Explain, don't compress.** Say what the thing is, or show the arithmetic
+   ("he divided what he spent by the trials it brought in") instead of naming
+   the metric. No ad-buyer or growth shorthand. A banned-term list (`CPT`,
+   `CAC`, `PMF`, `LTV`, `ROAS`, `channel` as a noun, `kill`, `creative` as a
+   noun, `UGC` unless spelled out) is enforced in QA as a hard FORMAT check.
+3. **Tiny story, not a list:** who did it, what they did, what they found,
+   what to do. No `•`/`-` bullets; one idea per line; blank line between
    thoughts.
-3. **One idea per line, under 14 words.** QA rejects any line over 18 words.
-4. **Every number explained**: "4x" says 4x *what*; "$30 a day" says per what.
-5. **Last line is the takeaway**, then the credit (`tail`) or question.
-6. Unchanged: point of view, straight tone, never fabricate, no links, SKIP
+4. **One idea per line, under 16 words.** QA rejects any line over 20 words.
+5. **Every number explained**: "4 times more" says 4 times more *per what*.
+6. **Last line is what to do**, then the credit (`tail`) or question.
+7. **Length follows clarity.** `llm.max_commentary_chars` rises from 245 to
+   262 (= 280 minus the longest `h/t @handle` tail). The `question` arm adds
+   the question's length on top; `smart_trim` still guarantees ≤ 280 total.
+   If a point cannot be explained in 280, the adaptive-thread path (hook +
+   one reply) is used instead of compressing.
+8. Unchanged: point of view, straight tone, never fabricate, no links, SKIP
    sentinel, no em dashes.
 
-Reference example (fits 245 chars with the tail):
+Reference example (256 chars with the tail; 271 with the question
+"Did the gap hold, @adriamatz?"):
 
 ```
-A founder ran the same ad on two platforms.
-Every free-trial signup cost 4x more on one.
+A founder ran one ad on two platforms to get people into his app's free trial.
 
-His rule: $30 a day per test.
-The day one platform costs double your cheapest, stop it.
+He divided what he spent on each by the trials it brought in.
 
-Check daily. A week is too long to wait.
+One platform cost 4 times more per trial. Same ad, same app.
+
+Measure this before you spend more.
 
 h/t @adriamatz
 ```
 
-Character budget: the `question` arm adds the question's length to
-`llm.max_commentary_chars` so the lesson is never squeezed to fit (X's hard
-limit is 280).
+The source also had a "$30 a day per test, stop at double your cheapest"
+rule. It is deliberately left out: one point, explained, beats three
+compressed.
 
 ## Data flow (summary)
 
