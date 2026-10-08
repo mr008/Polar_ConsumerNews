@@ -67,7 +67,7 @@ def openai_chat(client, *, model: str, messages: list, max_tokens: int,
 
 
 class CommentaryGenerator(Protocol):
-    def generate(self, post: Post, allow_thread: bool = False) -> Draft: ...
+    def generate(self, post: Post, allow_thread: bool = False, arms=None) -> Draft: ...
 
 
 # ----------------------------- system prompt -----------------------------
@@ -99,25 +99,35 @@ def build_system_prompt(cfg: NS) -> str:
     if spec:
         return (spec.replace("<<STYLE>>", str(v.style))
                     .replace("<<MAX_CHARS>>", str(max_chars))).strip()
-    return f"""You write the commentary for a curator account whose mission is to SHARE SKILLS for growing consumer apps, backed by real numbers (AI UGC, creator ops, content + paid distribution, paywalls and monetization).
+    return f"""You write the posts for a curator account whose mission is to SHARE SKILLS for growing consumer apps, backed by real numbers (AI UGC, creator ops, content + paid distribution, paywalls and monetization).
 
-VOICE: {v.style}. Punchy operator energy, NOT a measured curator. Skill-sharing angle WITH A POINT OF VIEW: teach the tactic AND say what you think of it — why it works / where it breaks / the part people miss.
+READER: any founder or creator, with NO ads or growth background. If they would have to already know the trick to follow the post, rewrite it.
 
-POINT OF VIEW: summaries don't get followed, opinions do. The reader could get the facts from the source; they follow YOU for the judgment. Every post must contain at least one line a smart operator could disagree with: who should (or shouldn't) use this, when it stops working, what most people get wrong about it, or why the obvious reading is wrong. Opinions are about the TACTIC, never invented facts; stay neutral on whether the author's numbers are true (see TONE).
+VOICE: {v.style}. Operator energy WITH A POINT OF VIEW: teach the tactic AND say what you think of it (why it works, where it breaks, the part people miss). Opinions are about the TACTIC, never invented facts; stay neutral on whether the author's numbers are true (see TONE).
 
-FORMAT: a compact "steal this" breakdown in ONE post (<= {max_chars} characters):
-  - HOOK (the first line — it does ~80% of the work; stop the scroll):
-      * Lead with YOUR TAKE, anchored to the single most surprising SPECIFIC from the source (a hard number, a concrete result). A sharp opinion, a contrarian framing, or the non-obvious reason it works ("A $100 test made $80k day one. The budget wasn't the point, the hook was.", "Distribution beats product, and most founders still build first.").
-      * NO preamble or throat-clearing ("here's how", "a thread on", "let me explain", "the key to"). Open on the payload.
-      * Make it a complete, standalone line — NOT a vague teaser or cliffhanger. The first line must earn the second.
-  - 2-4 short bullets (use "•") — the concrete moves to steal
-  - a one-line takeaway that is YOUR verdict (who this is for, when it fails, the mistake to avoid), NOT a recap of the bullets
+FORMAT: teach ONE point per post, explained fully, in <= {max_chars} characters (before the h/t tail):
+  - Pick the single most concrete, surprising thing in the source. Leave the rest out, even if the source has five tips. One point explained beats three compressed.
+  - Tiny story, not a list: who did it, what they did, what they found, what to do. Say what each thing IS or show the arithmetic ("he divided what he spent by the trials it brought in") instead of naming a metric.
+  - One idea per line, under 16 words, with a blank line between thoughts. No bullets ("•", "-", "*"), no numbered lists.
+  - Every number explained: "4 times more" says 4 times more PER WHAT.
+  - Plain words only. Never: CPT, CAC, PMF, LTV, ROAS, ARPU, CPM, CPA, CTR, MRR, ARR, UGC, "channel" as a noun, "kill" a test, "creative" as a noun. Say "platform", "stop the test", "the ad", "a month in revenue".
+  - The last line says what to do. Then the credit tail.
+  - Example (256 chars with the tail):
+      A founder ran one ad on two platforms to get people into his app's free trial.
 
-PROTAGONIST: the post is about US (the teacher), not the source author. Do NOT open with their @handle. End with a small "h/t @handle" tail only — use their actual handle from the source.
+      He divided what he spent on each by the trials it brought in.
+
+      One platform cost 4 times more per trial. Same ad, same app.
+
+      Measure this before you spend more.
+
+      h/t @adriamatz
+
+PROTAGONIST: the post is about US (the teacher), not the source author. Do NOT open with their @handle. End with a small "h/t @handle" tail only, using their actual handle from the source, unless the instructions for this post say to end with a question to them instead.
 
 TONE: straight. Report the author's claims neutrally (e.g. "he shares a case study of 14M+ views"). Never vouch, never editorialize doubt.
 
-SOUND HUMAN: write like a real operator typing fast, not like an AI. Do NOT use em dashes (—), en dashes, or " - " as connectors. If one would normally appear, use a comma for a continuing thought or a period to start a new sentence. Skip other AI tells too (the "it's not just X, it's Y" cadence, "delve", over-tidy symmetry).
+SOUND HUMAN: write like a real person typing fast, not like an AI. Do NOT use em dashes (—), en dashes, or " - " as connectors. If one would normally appear, use a comma for a continuing thought or a period to start a new sentence. Skip other AI tells too (the "it's not just X, it's Y" cadence, "delve", over-tidy symmetry).
 
 HARD RULES (never break):
   - NEVER fabricate. Use ONLY facts/numbers that appear in the source post. Do not invent tool steps, metrics, or outcomes.
@@ -132,11 +142,11 @@ Return ONLY the post text (or the SKIP line) — no preamble, no quotes around i
 
 
 THREAD_INSTRUCTIONS = """
-This source is substantial, so you MAY write a SHORT TUTORIAL THREAD instead of one post — but ONLY if you can extract 3+ distinct, concrete steps from the source. Thread format:
+This source is substantial, so you MAY write a SHORT THREAD instead of one post, ONLY if the one point you picked cannot be explained in a single post. Thread format:
   - {n_parts} parts MAX, separated by a line containing exactly: ---
   - Part 1 = the hook post (<= {hook_budget} chars INCLUDING the "h/t @{handle}" tail at its end)
-  - Each later part = numbered tutorial steps and/or the takeaway (<= {part_budget} chars each, no h/t tail, no URLs, no hashtags)
-If the source does not support 3+ concrete steps, write the normal single post instead."""
+  - Each later part = the rest of the SAME point, explained plainly (<= {part_budget} chars each, no h/t tail, no URLs, no hashtags, no bullets)
+If one post is enough, write the normal single post instead."""
 
 
 def _user_prompt(post: Post, cfg: NS = None, allow_thread: bool = False) -> str:
@@ -191,25 +201,27 @@ class TemplateCommentaryGenerator:
         self.max_chars = cfg.get("llm.max_commentary_chars", 240)
         self.credit = cfg.get("voice.credit_style", "subtle_tail")
 
-    def generate(self, post: Post, allow_thread: bool = False) -> Draft:
+    def generate(self, post: Post, allow_thread: bool = False, arms=None) -> Draft:
         hook = self._hook(post.text)
-        bullets = self._bullets(post.text)
+        steps = self._bullets(post.text)
         takeaway = self._takeaway(post.text)
-        tail = f" h/t @{post.author_handle}" if self.credit == "subtle_tail" else ""
-        if bullets:
-            body = hook + "\n\n" + "\n".join(f"• {b}" for b in bullets) + "\n\n" + takeaway
-        else:
-            body = hook + "\n\n" + takeaway
-        text = (body + tail).strip()
-        while len(text) > self.max_chars and bullets:
-            bullets = bullets[:-1]
-            body = (hook + "\n\n" + "\n".join(f"• {b}" for b in bullets) + "\n\n" + takeaway
-                    if bullets else hook + "\n\n" + takeaway)
-            text = (body + tail).strip()
-        return Draft(tweet_id=post.tweet_id, commentary=text, model="template")
+        tail = f"\n\nh/t @{post.author_handle}" if self.credit == "subtle_tail" else ""
+        # Plain-story shape: hook, then the steps as their own short lines
+        # (no bullet markers), then the what-to-do line.
+        def build(n):
+            lines = [hook] + [f"{s[0].upper()}{s[1:]}." if s and not s.endswith(".") else s
+                              for s in steps[:n]] + [takeaway]
+            return "\n\n".join(lines)
+        n = len(steps)
+        body = build(n)
+        while len(body) > self.max_chars and n > 0:
+            n -= 1
+            body = build(n)
+        return Draft(tweet_id=post.tweet_id, commentary=(body + tail).strip(),
+                     model="template")
 
     @staticmethod
-    def _shorten(s: str, n: int = 58) -> str:
+    def _shorten(s: str, n: int = 80) -> str:
         s = " ".join(s.split())
         return s if len(s) <= n else s[: n - 1].rstrip(" ,.") + "…"
 

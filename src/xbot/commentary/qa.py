@@ -20,12 +20,13 @@ from ..config import NS
 from ..models import Post
 from .generate import AUTO_ORDER, PROVIDERS
 
-QA_SYSTEM = """You are the final editor for an X account that shares posts with a compact "steal this" teaching breakdown (hook + bullets + takeaway). A draft may be a short thread (parts separated by blank lines) — judge it as a whole.
+QA_SYSTEM = """You are the final editor for an X account that teaches ONE growth lesson per post, in plain words any founder or creator can follow with no ads background: a tiny story (who did it, what they did, what they found, what to do). A draft may be a short thread (parts separated by blank lines) — judge it as a whole.
 
 REJECT the draft if ANY of these hold:
-1) META: it addresses the source author or reader instead of teaching — asks for more content ("drop the full thread"), says it can't make a breakdown, comments on the post itself, or reads like a reply/DM.
-2) NO_LESSON: a builder reading it learns no concrete, applicable tactic or insight.
-3) FORMAT: missing a hook line or a takeaway, or it's one undifferentiated blob.
+1) META: it addresses the source author or reader instead of teaching — asks for more content ("drop the full thread"), says it can't write it, comments on the post itself, or reads like a reply/DM. A single closing question to the author is allowed ONLY when a note below says this draft may end with one.
+2) NO_LESSON: a reader learns no concrete, applicable tactic or insight.
+3) UNCLEAR: a smart person with no ads/growth background could not follow it — unexplained shorthand, a number whose meaning is not stated, or several compressed points instead of one explained point.
+4) FORMAT: no line that says what to do, or one undifferentiated blob.
 
 Judge the DRAFT only — assume the source post was already vetted. Be permissive about style; reject only real failures.
 

@@ -29,10 +29,10 @@ REFUSAL_LOCAL_14 = (
 )
 
 GOOD_COMMENTARY = (
-    "Faceless UGC accounts print views with zero talent costs 🎬\n\n"
-    "• Rip trending sounds daily\n"
-    "• AI voiceover over stock b-roll\n"
-    "• Post often, kill losers fast\n\n"
+    "Faceless video accounts print views with zero talent costs 🎬\n\n"
+    "Rip trending sounds daily.\n\n"
+    "Put an AI voiceover over stock b-roll.\n\n"
+    "Post often and drop the losers fast.\n\n"
     "Volume beats polish. h/t @creator"
 )
 

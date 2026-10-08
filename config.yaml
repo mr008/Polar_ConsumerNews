@@ -263,7 +263,8 @@ safety:
 voice:
   style: growth_first          # punchy operator energy; NOT measured-curator
   angle: skill_sharing         # teach the tactic: why it works / the move to steal
-  format: compact_breakdown    # single post: hook + 2-4 bullets + takeaway
+  format: plain_story    # one point per post, explained in plain words (spec 2026-10-08 §6)
+  readable_rules: true   # deterministic no-bullets/no-jargon/short-lines gate (safety.check_readability)
   allow_thread_for_top_posts: false
   tone: straight               # report author's claims neutrally; no hedge, no vouching
   protagonist: me              # post is about ME (the teacher), author de-emphasized
@@ -284,16 +285,10 @@ llm:
   curator_model: ""
   classifier_model: "claude-haiku-4-5-20251001"    # (legacy field; judge_model below is used)
   embeddings_model: "text-embedding-3-small"
-  # Target the prompt asks for. OPTIMAL-LENGTH strategy: teaching posts read as
-  # more valuable when dense, and X's 2026 dwell-time weighting rewards fuller
-  # posts that hold attention — so aim high in the 240-270 "teaching sweet spot"
-  # rather than thin one-liners (those win for hot-takes, not skill content).
-  # 245 lands ~245-270 after the model's slight overshoot; _vet_commentary
-  # smart_trims any over-length draft to the ~262 body budget at a sentence
-  # boundary, so a high target is safe (trimming beats blocking). ~262 is the hard
-  # ceiling on a non-Premium account; genuinely long-form posts need X Premium
-  # (which also lifts the reach penalty — the #1 growth lever).
-  max_commentary_chars: 245
+  # 262 = 280 minus the longest "h/t @handle" tail. Length follows clarity:
+  # ONE point explained fully (spec 2026-10-08 §6) needs the room. smart_trim
+  # still guarantees <= 280 after composition.
+  max_commentary_chars: 262
   temperature: 0.7
 
 # AUTO-REPLY ENGINE — the follower-growth lever. Replies to fresh, on-topic

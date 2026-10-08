@@ -39,3 +39,32 @@ def test_commentary_allows_source_numbers():
     post = _post("scaled to $20k/mo with this 5 step play")
     ok, _ = check_commentary(post, "the 5 step play that hit 20k. h/t @x", CFG)
     assert ok
+
+
+def test_readability_rejects_bullets_jargon_and_long_lines():
+    from xbot.commentary.safety import check_readability
+    assert check_readability("• one\n• two") == "format:bullets"
+    assert check_readability("- one\n- two") == "format:bullets"
+    assert check_readability("Your CPT is the only number.") == "format:jargon:cpt"
+    long = " ".join(["word"] * 21)
+    assert check_readability(long).startswith("format:line_too_long:21")
+    assert check_readability("A founder ran one ad on two platforms.\n\nMeasure it.") == ""
+
+
+def test_commentary_gate_applies_readability_rules():
+    post = _post("he ran one ad on 2 platforms")
+    ok, reason = check_commentary(post, "• 2 platforms, same ad\n• measure it", CFG)
+    assert not ok and reason == "format:bullets"
+    ok, reason = check_commentary(post, "One ad, 2 platforms.\n\nMeasure it.\n\nh/t @x", CFG)
+    assert ok
+    ok, reason = check_commentary(post, "One ad, 2 platforms.", CFG,
+                                  parts=["• step one"])
+    assert not ok and reason == "part1_format:bullets"
+
+
+def test_readability_rules_can_be_switched_off():
+    cfg = NS({"safety": {"exclude": []}, "llm": {"max_commentary_chars": 240},
+              "voice": {"readable_rules": False}})
+    post = _post("he ran one ad on 2 platforms")
+    ok, _ = check_commentary(post, "• 2 platforms\n• measure", cfg)
+    assert ok

@@ -67,6 +67,30 @@ URL_IN_TEXT = re.compile(r"https?://|t\.co/|\bwww\.", re.IGNORECASE)
 HASHTAG = re.compile(r"(?:^|\s)#\w+")
 MENTION = re.compile(r"(?:^|\s)@\w+")
 
+# READABLE VOICE (spec 2026-10-08 §6): every post must be followable by a
+# founder or creator with no ads/growth background. Deterministic part of the
+# rule set; the QA gate judges the softer "is ONE point explained" half.
+JARGON = ["cpt", "cac", "pmf", "ltv", "roas", "arpu", "cpm", "cpa", "ctr",
+          "mrr", "arr", "ugc"]
+MAX_WORDS_PER_LINE = 20
+_BULLET_LINE = re.compile(r"^\s*(?:•|-|\*)\s+")
+
+
+def check_readability(text: str) -> str:
+    """'' when the text obeys the plain-language rules, else 'format:<why>'.
+    Checks: no bullet lines, no growth shorthand, no line over 20 words."""
+    for line in (text or "").splitlines():
+        if _BULLET_LINE.match(line):
+            return "format:bullets"
+        n = len(line.split())
+        if n > MAX_WORDS_PER_LINE:
+            return f"format:line_too_long:{n}"
+    low = (text or "").lower()
+    for term in JARGON:
+        if re.search(rf"\b{term}\b", low):
+            return f"format:jargon:{term}"
+    return ""
+
 
 def _hits(text: str, words: list[str]) -> bool:
     # Word-boundary match for single words (so "rage" doesn't fire on "leverage");
@@ -140,6 +164,11 @@ def check_commentary(post: Post, commentary: str, cfg: NS,
     body = strip_ht_tail(commentary)
     if len(body) > budget:
         return False, f"too_long:{len(body)}>{budget}"
+    readable = bool(cfg.get("voice.readable_rules", True))
+    if readable:
+        why = check_readability(body)
+        if why:
+            return False, why
     # The main post must never carry a URL outside legacy link mode.
     if posting_format(cfg) != "link" and URL_IN_TEXT.search(commentary):
         return False, "url_in_commentary"
@@ -151,6 +180,10 @@ def check_commentary(post: Post, commentary: str, cfg: NS,
         ok, note = _check_text_common(post, part, cfg, src_digits)
         if not ok:
             return False, f"part{i}_{note}"
+        if readable:
+            why = check_readability(part)
+            if why:
+                return False, f"part{i}_{why}"
         if URL_IN_TEXT.search(part):
             return False, f"part{i}_url"
         if len(part) > part_budget(cfg):
