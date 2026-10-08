@@ -149,18 +149,22 @@ This source is substantial, so you MAY write a SHORT THREAD instead of one post,
 If one post is enough, write the normal single post instead."""
 
 
-def _user_prompt(post: Post, cfg: NS = None, allow_thread: bool = False) -> str:
+def _user_prompt(post: Post, cfg: NS = None, allow_thread: bool = False,
+                 arms: dict | None = None) -> str:
+    from ..experiments import arm  # lazy: avoid cycle
+    question_arm = arm(arms, "author_bait") == "question" and not is_web_source(post)
     extra = ""
     if cfg is not None:
         from ..publish.publisher import body_budget, part_budget  # lazy: avoid cycle
-        hook_budget = body_budget(post, cfg)
+        hook_budget = body_budget(post, cfg, arms)
         # ONE length knob: llm.max_commentary_chars is the target the model aims
         # for (optimal-length strategy), capped at the hard body budget so it can
         # never exceed the 280 ceiling. Keeps the system-prompt target and this
         # per-post instruction consistent (they used to conflict).
         target = min(int(cfg.get("llm.max_commentary_chars", 240)), hook_budget)
-        extra = (f"\nHARD LIMIT for this post: {hook_budget} characters before the "
-                 f"h/t tail — aim for {target}. If in doubt, cut a bullet.")
+        what = "in total" if question_arm else "before the h/t tail"
+        extra = (f"\nHARD LIMIT for this post: {hook_budget} characters {what} — "
+                 f"aim for {target}. If in doubt, cut a sentence, never the explanation.")
         if allow_thread:
             extra += THREAD_INSTRUCTIONS.format(
                 n_parts=int(cfg.get("posting.max_thread_parts", 3)),
@@ -174,14 +178,19 @@ def _user_prompt(post: Post, cfg: NS = None, allow_thread: bool = False) -> str:
         # h/t (we don't tag blogs — a wrong @ would mis-credit); attribution is separate.
         return (f"Source article ({post.author_name}):\n"
                 f'"""\n{post.text}\n"""\n\n'
-                f"Write the commentary now as a COMPLETE teaching post: a hook, 2-3 "
-                f"bullets, and a clear one-line takeaway on its OWN final line — never "
-                f"skip the takeaway. Teach the tactic in your own words (the source is "
-                f"a brief, not something to compress further). Do NOT add an h/t or "
-                f"@mention.{extra}")
+                f"Write the post now as a COMPLETE teaching post: one point, told as "
+                f"a tiny story, ending with a clear what-to-do line on its OWN final "
+                f"line. Teach it in your own words (the source is a brief, not "
+                f"something to compress further). Do NOT add an h/t or @mention.{extra}")
+    if question_arm:
+        ending = (f"End with ONE short, specific question to @{post.author_handle} "
+                  f"about a concrete claim in their post. The question is the last "
+                  f"line and REPLACES the h/t tail (do not write 'h/t').")
+    else:
+        ending = f"End with: h/t @{post.author_handle}"
     return (f"Source post by @{post.author_handle} ({post.author_name}):\n"
             f'"""\n{post.text}\n"""\n\n'
-            f"Write the commentary now. End with: h/t @{post.author_handle}{extra}")
+            f"Write the post now. {ending}{extra}")
 
 
 def split_parts(text: str, cfg: NS) -> tuple[str, list[str]]:
@@ -271,24 +280,24 @@ class OpenAICompatGenerator:
         self.temperature = cfg.get("llm.temperature", 0.7)
         self.system = build_system_prompt(cfg)
 
-    def generate(self, post: Post, allow_thread: bool = False) -> Draft:
+    def generate(self, post: Post, allow_thread: bool = False, arms=None) -> Draft:
         return self._call(post, allow_thread=allow_thread, messages=[
             {"role": "system", "content": self.system},
-            {"role": "user", "content": _user_prompt(post, self.cfg, allow_thread)},
+            {"role": "user", "content": _user_prompt(post, self.cfg, allow_thread, arms)},
         ])
 
-    def revise(self, post: Post, previous: str, feedback: str) -> Draft:
+    def revise(self, post: Post, previous: str, feedback: str, arms=None) -> Draft:
         """One editor-feedback rewrite (used by the QA gate / length check).
         A rejected thread retries as a compact SINGLE post — simpler to fix."""
         return self._call(post, messages=[
             {"role": "system", "content": self.system},
-            {"role": "user", "content": _user_prompt(post, self.cfg)},
+            {"role": "user", "content": _user_prompt(post, self.cfg, arms=arms)},
             {"role": "assistant", "content": previous},
             {"role": "user", "content": (
                 f"Editor rejected that draft: {feedback}\n"
                 "Rewrite it as ONE single post fixing ONLY that problem. Keep every "
-                "other rule (voice, format, h/t tail, no fabrication). "
-                "Return only the post text.")},
+                "other rule (voice, one explained point, the ending you were asked "
+                "for, no fabrication). Return only the post text.")},
         ])
 
     def _call(self, post: Post, messages: list[dict], allow_thread: bool = False) -> Draft:
@@ -312,7 +321,7 @@ class AnthropicGenerator:
         self.temperature = cfg.get("llm.temperature", 0.7)
         self.system = build_system_prompt(cfg)
 
-    def generate(self, post: Post, allow_thread: bool = False) -> Draft:
+    def generate(self, post: Post, allow_thread: bool = False, arms=None) -> Draft:
         import anthropic  # lazy import
         client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
         msg = client.messages.create(
@@ -320,7 +329,7 @@ class AnthropicGenerator:
             temperature=self.temperature,
             system=self.system,
             messages=[{"role": "user",
-                       "content": _user_prompt(post, self.cfg, allow_thread)}],
+                       "content": _user_prompt(post, self.cfg, allow_thread, arms)}],
         )
         text = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
         hook, parts = split_parts(text.strip(), self.cfg) if allow_thread else (text.strip(), [])

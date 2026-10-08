@@ -53,12 +53,16 @@ def strip_ht_tail(commentary: str) -> str:
     return _HT_TAIL.sub("", commentary.strip()).rstrip()
 
 
-def body_budget(post: Post, cfg) -> int:
+def body_budget(post: Post, cfg, arms: dict | None = None) -> int:
     """Max commentary-body chars (h/t tail excluded) for this post in the active
     format. Mention mode keeps the tail inside the 280; link mode also loses the
-    URL (23 chars on X)."""
+    URL (23 chars on X). The author_bait 'question' arm carries the @handle in
+    its closing question instead of a tail, so it gets the whole 280."""
     if is_web_source(post):
         return 280 - 2                       # original teaching post, no h/t tail
+    from ..experiments import arm  # lazy: avoid import cycle
+    if arm(arms, "author_bait") == "question":
+        return 280 - 2
     fmt = posting_format(cfg)
     if fmt == "link":
         return 280 - (len(f"h/t @{post.author_handle}: ") + 23) - 2
@@ -127,7 +131,11 @@ def compose_text(draft: Draft, post: Post, cfg) -> tuple[str, str]:
             if len(text) > 280:
                 text = smart_trim(text, 278)
             return text, "mention"
-        if not _HT_TAIL.search(text):  # credit tail is part of the voice — ensure it
+        # Credit rule: a tail "h/t @handle" OR an in-body @handle (the
+        # author_bait 'question' arm) both count. Append the tail only when
+        # the handle appears nowhere.
+        mention = re.compile(rf"@{re.escape(post.author_handle)}(?!\w)", re.IGNORECASE)
+        if not _HT_TAIL.search(text) and not mention.search(text):
             text = f"{text}\n\nh/t @{post.author_handle}"
         if len(text) > 280:  # last resort — safety should have caught this
             text = smart_trim(text, 280 - (len(f"h/t @{post.author_handle}") + 4))

@@ -411,10 +411,10 @@ class _FakeGenerator:
         self.first_text = first_text
         self.revisions = 0
 
-    def generate(self, post, allow_thread=False):
+    def generate(self, post, allow_thread=False, arms=None):
         return Draft(tweet_id=post.tweet_id, commentary=self.first_text, model="fake")
 
-    def revise(self, post, previous, feedback):
+    def revise(self, post, previous, feedback, arms=None):
         self.revisions += 1
         return Draft(tweet_id=post.tweet_id, commentary=self.revised_text, model="fake")
 

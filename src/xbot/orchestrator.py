@@ -386,7 +386,10 @@ class Orchestrator:
                             and not is_web_source(post)  # web posts publish as one post
                             and score.quote_worthy
                             >= self.cfg.get("posting.thread_min_teaching", 0.75))
-            draft = self.generator.generate(post, allow_thread=allow_thread)
+            from .experiments import assign_arms  # lazy: keeps module import light
+            arms = assign_arms(self.cfg, self.repo, post)
+            draft = self.generator.generate(post, allow_thread=allow_thread, arms=arms)
+            draft.arms = arms
 
             # SKIP sentinel: the generator's only sanctioned refusal. Store a
             # blocked draft row (keeps one-attempt-per-post-EVER) but never
@@ -394,6 +397,7 @@ class Orchestrator:
             if draft.commentary.strip().lower().startswith("skip:"):
                 reason = draft.commentary.strip()[5:].strip()[:80]
                 draft.safety_passed = False
+                draft.arms = arms  # blocked rows keep the assignment for debugging
                 draft.safety_notes = f"no_material:{reason}"
                 draft_id = self.repo.add_draft(draft, status="blocked")
                 self.repo.set_candidate(post.tweet_id, "skipped",
@@ -427,9 +431,10 @@ class Orchestrator:
         notes = ""
         for attempt in (1, 2):
             ok, notes = check_commentary(post, draft.commentary, self.cfg,
-                                         parts=draft.parts)
+                                         parts=draft.parts, arms=draft.arms)
             if ok:
-                qa_ok, qa_issue = qa_commentary(post, draft.full_text, self.cfg)
+                qa_ok, qa_issue = qa_commentary(post, draft.full_text, self.cfg,
+                                                arms=draft.arms)
                 if qa_ok:
                     return draft, True, "ok"
                 notes = qa_issue
@@ -438,16 +443,20 @@ class Orchestrator:
             revise = getattr(self.generator, "revise", None)
             if revise is None:  # offline template generator can't rewrite
                 break
-            draft = revise(post, draft.full_text, self._revision_feedback(post, notes))
+            arms_before = draft.arms  # the generator returns a fresh Draft
+            draft = revise(post, draft.full_text, self._revision_feedback(post, notes),
+                           arms=arms_before)
+            draft.arms = arms_before
             if draft.commentary.strip().lower().startswith("skip:"):
                 return draft, False, f"no_material:{draft.commentary.strip()[5:].strip()[:80]}"
 
         # Last resort for a PURE length failure: deterministic trim + re-check.
         if notes.startswith("too_long"):
             from .publish.publisher import body_budget, smart_trim
-            draft.commentary = smart_trim(draft.commentary, body_budget(post, self.cfg))
+            draft.commentary = smart_trim(
+                draft.commentary, body_budget(post, self.cfg, draft.arms))
             ok, notes2 = check_commentary(post, draft.commentary, self.cfg,
-                                          parts=draft.parts)
+                                          parts=draft.parts, arms=draft.arms)
             if ok:
                 return draft, True, "ok(trimmed)"
             notes = notes2
@@ -546,10 +555,10 @@ class Orchestrator:
             # draft pending for the next window; a real rejection blocks it.
             from .commentary.qa import qa_commentary  # lazy import
             ok, revet_notes = check_commentary(post, draft.commentary, self.cfg,
-                                               parts=draft.parts)
+                                               parts=draft.parts, arms=draft.arms)
             if ok:
                 ok, revet_notes = qa_commentary(post, draft.full_text, self.cfg,
-                                                fail_open=False)
+                                                fail_open=False, arms=draft.arms)
             if not ok:
                 if revet_notes == "qa_unavailable":
                     continue  # transient — draft stays pending, next window retries
@@ -615,12 +624,13 @@ class Orchestrator:
         # Feature tag for the outcome harvester (AUTONOMY.md). Never allowed to
         # break publishing — the post is already live at this point.
         try:
-            self._log_features(draft, post, our_id)
+            self._log_features(draft, post, our_id, arms=dict(draft.arms or {}))
         except Exception as e:
             print(f"  [features] tagging failed ({type(e).__name__}) — post unaffected")
         return {"tweet_id": post.tweet_id, "our_id": our_id, "author": post.author_handle}
 
-    def _log_features(self, draft: Draft, post: Post, our_id: str) -> None:
+    def _log_features(self, draft: Draft, post: Post, our_id: str,
+                      arms: dict | None = None) -> None:
         """Record WHAT KIND of post just went out, so harvested outcomes can be
         attributed to editorial choices (format, hook, slot, source) later."""
         if not our_id:
@@ -646,6 +656,7 @@ class Orchestrator:
             "topic_fit": score.topic_fit if score else None,
             "quote_score": score.quote_score if score else None,
             "posted_at": utcnow().isoformat(),
+            "arms": arms or {},
         })
 
     # ---------- auto-reply engine ----------

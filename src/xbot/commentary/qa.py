@@ -83,15 +83,21 @@ def _qa_call(system: str, user: str, cfg: NS, fail_open: bool,
 
 
 def qa_commentary(post: Post, commentary: str, cfg: NS,
-                  fail_open: bool = True) -> tuple[bool, str]:
+                  fail_open: bool = True, arms: dict | None = None) -> tuple[bool, str]:
     """Returns (ok, issue). Fail-open at draft time (deterministic gates already
     ran); pass fail_open=False at publish time so an unreviewable draft is
     skipped rather than posted."""
     if not cfg.get("ranking.qa_gate", True):
         return True, ""
+    from ..experiments import arm  # lazy
+    note = ""
+    if arm(arms, "author_bait") == "question":
+        note = ("\n\nNOTE: this draft MAY end with ONE question addressed to the "
+                "source author. That alone is not META. Still reject it if the "
+                "lesson is missing or unclear.")
     return _qa_call(QA_SYSTEM, (
         f"Source post (already vetted):\n\"\"\"\n{post.text[:600]}\n\"\"\"\n\n"
-        f"Draft to check:\n\"\"\"\n{commentary}\n\"\"\""), cfg, fail_open, "draft")
+        f"Draft to check:\n\"\"\"\n{commentary}\n\"\"\"{note}"), cfg, fail_open, "draft")
 
 
 def qa_reply(post: Post, reply_text: str, cfg: NS) -> tuple[bool, str]:
