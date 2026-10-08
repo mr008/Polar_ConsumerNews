@@ -141,6 +141,10 @@ class Draft:
     # Adaptive threads: continuation tweets posted as self-replies under the
     # commentary (the hook). Empty list = plain single post.
     parts: list[str] = field(default_factory=list)
+    # Experiment arms this draft was assigned at draft time, e.g.
+    # {"image_card": "card", "author_bait": "question"}. Empty = control
+    # everywhere (experiments.py). Copied to post_features at publish.
+    arms: dict = field(default_factory=dict)
     created_at: datetime = field(default_factory=utcnow)
 
     @property

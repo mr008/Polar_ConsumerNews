@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS drafts (
     status TEXT DEFAULT 'pending',
     note TEXT,
     parts TEXT,
+    arms TEXT,
     created_at TEXT
 );
 
@@ -136,6 +137,7 @@ CREATE TABLE IF NOT EXISTS post_features (
     teaching REAL,
     topic_fit REAL,
     quote_score REAL,
+    arms TEXT,
     posted_at TEXT
 );
 
@@ -193,7 +195,10 @@ class SqliteRepository:
                     "ALTER TABLE scores ADD COLUMN judged INTEGER DEFAULT 0",
                     "ALTER TABLE drafts ADD COLUMN parts TEXT",
                     "ALTER TABLE run_log ADD COLUMN n_replied INTEGER DEFAULT 0",
-                    "ALTER TABLE posts ADD COLUMN reply_settings TEXT"):
+                    "ALTER TABLE posts ADD COLUMN reply_settings TEXT",
+                    # 2026-10 growth experiments (spec 2026-10-08)
+                    "ALTER TABLE drafts ADD COLUMN arms TEXT",
+                    "ALTER TABLE post_features ADD COLUMN arms TEXT"):
             try:
                 self.conn.execute(ddl)
             except Exception:
@@ -332,11 +337,11 @@ class SqliteRepository:
     def add_draft(self, draft: Draft, status: str = "pending") -> int:
         cur = self.conn.execute(
             """INSERT INTO drafts (tweet_id, commentary, model, safety_passed,
-                   safety_notes, status, parts, created_at)
-               VALUES (?,?,?,?,?,?,?,?)""",
+                   safety_notes, status, parts, arms, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
             (draft.tweet_id, draft.commentary, draft.model, int(draft.safety_passed),
              draft.safety_notes, status, json.dumps(draft.parts or []),
-             draft.created_at.isoformat()),
+             json.dumps(draft.arms or {}), draft.created_at.isoformat()),
         )
         self.conn.commit()
         return cur.lastrowid
@@ -346,10 +351,15 @@ class SqliteRepository:
             parts = json.loads(r["parts"]) if r["parts"] else []
         except (KeyError, IndexError, ValueError, TypeError):
             parts = []
+        try:
+            arms = json.loads(r["arms"]) if r["arms"] else {}
+        except (KeyError, IndexError, ValueError, TypeError):
+            arms = {}
         return Draft(
             tweet_id=r["tweet_id"], commentary=r["commentary"], model=r["model"],
             safety_passed=bool(r["safety_passed"]), safety_notes=r["safety_notes"] or "",
             parts=parts if isinstance(parts, list) else [],
+            arms=arms if isinstance(arms, dict) else {},
             created_at=parse_dt(r["created_at"]),
         )
 
@@ -400,6 +410,24 @@ class SqliteRepository:
             "UPDATE drafts SET status=?, note=? WHERE id=?", (status, note, draft_id)
         )
         self.conn.commit()
+
+    def arm_counts(self, experiment: str) -> dict[str, int]:
+        """How many live drafts (pending or posted) carry each arm of one
+        experiment — the alternation counter. Blocked/stale/failed drafts don't
+        count: they never reached the feed."""
+        rows = self.conn.execute(
+            "SELECT arms FROM drafts WHERE status IN ('pending','posted') "
+            "AND arms IS NOT NULL AND arms != '' "
+            "AND tweet_id NOT LIKE 'web:%'").fetchall()   # web posts never alternate
+        counts: dict[str, int] = {}
+        for r in rows:
+            try:
+                a = (json.loads(r["arms"]) or {}).get(experiment)
+            except (ValueError, TypeError, AttributeError):
+                a = None
+            if a:
+                counts[a] = counts.get(a, 0) + 1
+        return counts
 
     # ---------- posted log ----------
     def has_posted(self, source_tweet_id: str) -> bool:
@@ -698,8 +726,8 @@ class SqliteRepository:
         self.conn.execute(
             """INSERT INTO post_features (our_tweet_id, source_tweet_id, author_handle,
                    route, kind, format, parts_n, chars, has_question, hook,
-                   window_hour, teaching, topic_fit, quote_score, posted_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                   window_hour, teaching, topic_fit, quote_score, arms, posted_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(our_tweet_id) DO NOTHING""",
             (f.get("our_tweet_id", ""), f.get("source_tweet_id", ""),
              f.get("author_handle", ""), f.get("route", "pipeline"),
@@ -707,7 +735,8 @@ class SqliteRepository:
              int(f.get("parts_n", 0)), int(f.get("chars", 0)),
              int(bool(f.get("has_question", False))), (f.get("hook", "") or "")[:160],
              f.get("window_hour"), f.get("teaching"), f.get("topic_fit"),
-             f.get("quote_score"), f.get("posted_at", utcnow().isoformat())),
+             f.get("quote_score"), json.dumps(f.get("arms") or {}),
+             f.get("posted_at", utcnow().isoformat())),
         )
         self.conn.commit()
 
