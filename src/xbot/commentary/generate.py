@@ -144,7 +144,7 @@ Return ONLY the post text (or the SKIP line) — no preamble, no quotes around i
 THREAD_INSTRUCTIONS = """
 This source is substantial, so you MAY write a SHORT THREAD instead of one post, ONLY if the one point you picked cannot be explained in a single post. Thread format:
   - {n_parts} parts MAX, separated by a line containing exactly: ---
-  - Part 1 = the hook post (<= {hook_budget} chars INCLUDING the "h/t @{handle}" tail at its end)
+  - Part 1 = the hook post (<= {hook_budget} chars INCLUDING {ending})
   - Each later part = the rest of the SAME point, explained plainly (<= {part_budget} chars each, no h/t tail, no URLs, no hashtags, no bullets)
 If one post is enough, write the normal single post instead."""
 
@@ -170,7 +170,9 @@ def _user_prompt(post: Post, cfg: NS = None, allow_thread: bool = False,
                 n_parts=int(cfg.get("posting.max_thread_parts", 3)),
                 hook_budget=hook_budget,
                 part_budget=part_budget(cfg),
-                handle=post.author_handle)
+                ending=(f"the closing question to @{post.author_handle} (no h/t tail)"
+                        if question_arm else
+                        f'the "h/t @{post.author_handle}" tail at its end'))
     if is_web_source(post):
         # Web article: teach the tactic in our own voice. The source is already a
         # dense brief — TEACH from it, don't re-compress it into a bare summary

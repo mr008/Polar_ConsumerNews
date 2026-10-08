@@ -452,9 +452,17 @@ class Orchestrator:
 
         # Last resort for a PURE length failure: deterministic trim + re-check.
         if notes.startswith("too_long"):
-            from .publish.publisher import body_budget, smart_trim
+            from .publish.publisher import body_budget, mentions_handle, smart_trim
             draft.commentary = smart_trim(
                 draft.commentary, body_budget(post, self.cfg, draft.arms))
+            if (draft.arms.get("author_bait") == "question"
+                    and not mentions_handle(draft.commentary, post.author_handle)):
+                # The trim cut the closing question, so compose_text will add the
+                # h/t tail: relabel (the stored arm must match what is posted) and
+                # re-trim to the tail-style budget.
+                draft.arms = {**draft.arms, "author_bait": "tail"}
+                draft.commentary = smart_trim(
+                    draft.commentary, body_budget(post, self.cfg, draft.arms))
             ok, notes2 = check_commentary(post, draft.commentary, self.cfg,
                                           parts=draft.parts, arms=draft.arms)
             if ok:

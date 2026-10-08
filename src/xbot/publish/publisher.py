@@ -53,6 +53,11 @@ def strip_ht_tail(commentary: str) -> str:
     return _HT_TAIL.sub("", commentary.strip()).rstrip()
 
 
+def mentions_handle(text: str, handle: str) -> bool:
+    """True when `text` contains @handle as a whole handle (not a longer one)."""
+    return bool(re.search(rf"@{re.escape(handle)}(?!\w)", text or "", re.IGNORECASE))
+
+
 def body_budget(post: Post, cfg, arms: dict | None = None) -> int:
     """Max commentary-body chars (h/t tail excluded) for this post in the active
     format. Mention mode keeps the tail inside the 280; link mode also loses the
@@ -134,8 +139,7 @@ def compose_text(draft: Draft, post: Post, cfg) -> tuple[str, str]:
         # Credit rule: a tail "h/t @handle" OR an in-body @handle (the
         # author_bait 'question' arm) both count. Append the tail only when
         # the handle appears nowhere.
-        mention = re.compile(rf"@{re.escape(post.author_handle)}(?!\w)", re.IGNORECASE)
-        if not _HT_TAIL.search(text) and not mention.search(text):
+        if not _HT_TAIL.search(text) and not mentions_handle(text, post.author_handle):
             text = f"{text}\n\nh/t @{post.author_handle}"
         if len(text) > 280:  # last resort — safety should have caught this
             text = smart_trim(text, 280 - (len(f"h/t @{post.author_handle}") + 4))

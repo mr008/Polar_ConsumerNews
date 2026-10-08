@@ -135,3 +135,46 @@ def test_draft_and_publish_carry_arms_to_features():
         "SELECT arms FROM post_features ORDER BY our_tweet_id").fetchall()
     assert sorted(r["arms"] for r in rows) == sorted(
         ['{"author_bait": "tail"}', '{"author_bait": "question"}'])
+
+
+def test_credit_check_ignores_longer_handles():
+    # '@adriamatz' must not be satisfied by '@adriamatzz' / '@adriamatz2'
+    for other in ("@adriamatzz", "@adriamatz2"):
+        d = Draft(tweet_id="1", commentary=f"One ad.\n\nTrue, {other}?", model="t", arms=Q)
+        text, _ = compose_text(d, _post(), CFG)
+        assert text.endswith("h/t @adriamatz")
+
+
+def test_trim_that_cuts_the_question_relabels_to_tail():
+    body = ("One ad ran on 2 platforms.\n\n"
+            "One cost 4x more per trial.\n\n"
+            "The cheap one used a plain founder voice and one clear ask.\n\n"
+            "The pricey one used a polished studio look and many asks.\n\n"
+            "People trust the plain voice more, so it wins.\n\n"
+            "Steal that and test the plain voice first before you scale.")
+    draft = Draft(tweet_id="1", model="t", arms=dict(Q),
+                  commentary=f"{body}\n\nDid the gap hold, @adriamatz?")
+    assert len(draft.commentary) > 278
+    o = _orch(SqliteRepository(":memory:"))
+    out, ok, notes = o._vet_commentary(_post(), draft)
+    assert ok and notes == "ok(trimmed)", notes
+    assert out.arms["author_bait"] == "tail"
+    text, _ = compose_text(out, _post(), CFG)
+    assert text.endswith("h/t @adriamatz") and len(text) <= 280
+
+
+def test_thread_instructions_follow_the_arm():
+    p = g._user_prompt(_post(), CFG, allow_thread=True, arms=Q)
+    assert "INCLUDING the h/t tail" not in p and "INCLUDING the \"h/t" not in p
+    assert "closing question to @adriamatz" in p
+    p = g._user_prompt(_post(), CFG, allow_thread=True, arms=T)
+    assert 'INCLUDING the "h/t @adriamatz" tail' in p
+
+
+def test_web_post_ignores_question_arm():
+    web = Post(tweet_id="web:abc", author_handle="blog", author_name="Blog",
+               text="A tactic about hooks.", created_at=utcnow(),
+               author_follower_count=0, metrics=Metrics())
+    p = g._user_prompt(web, CFG, arms=Q)
+    assert "question to @" not in p and "ONE short, specific question" not in p
+    assert body_budget(web, CFG, arms=Q) == body_budget(web, CFG)
