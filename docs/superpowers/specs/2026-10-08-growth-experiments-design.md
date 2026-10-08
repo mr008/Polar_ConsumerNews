@@ -29,6 +29,7 @@ First batch, running together:
 | `image_card` | per-post | `text` (today) vs `card` (self-rendered image) |
 | `author_bait` | per-post | `tail` (today: `h/t @author`) vs `question` (closing question to `@author`) |
 | `volume` | period (1 week) | three levers below, on vs off |
+| readable voice | baseline change (§6) | before vs after, applies to every arm |
 
 A **manual reply sprint** (owner spends 10–15 min/day posting the
 `reply-nudge` suggestions) is the planned week-2 period test. It is not in this
@@ -171,6 +172,50 @@ unchanged gate).
   and disables the test.
 - Decision rule is deliberately crude: at n≈10 per arm anything under ~30% is
   indistinguishable from noise.
+
+## 6. Readable voice (baseline change, not an arm)
+
+Owner decision 2026-10-08 after reading a draft in the current voice: "I
+don't even understand this." The current `agent/voice.md` writes operator
+shorthand ("channel", "CPT", "kill a test") for people who already run
+growth. New target reader: **any founder or creator, no background.** This is
+a dated baseline change, applied to every arm, so the per-post tests above
+measure on top of it. The strategist grades it like a period test (median
+24h views before vs after `voice_changed: 2026-10-09` in config).
+
+Rules (go into `agent/voice.md`, replacing the "compact breakdown" format;
+the embedded fallback prompt in `generate.py` is updated to stay byte-identical):
+
+1. **Explain, don't compress.** Say what the thing is; no ad-buyer or growth
+   shorthand. A banned-term list (`CPT`, `CAC`, `PMF`, `channel` as a noun,
+   `kill`, `creative` as a noun, `LTV`, `ROAS`, `UGC` unless spelled out) is
+   enforced in QA as a hard FORMAT check.
+2. **Tiny story, not a list:** who did it, what they found, the rule, why it
+   matters. No `•`/`-` bullets; one idea per line; blank line between
+   thoughts.
+3. **One idea per line, under 14 words.** QA rejects any line over 18 words.
+4. **Every number explained**: "4x" says 4x *what*; "$30 a day" says per what.
+5. **Last line is the takeaway**, then the credit (`tail`) or question.
+6. Unchanged: point of view, straight tone, never fabricate, no links, SKIP
+   sentinel, no em dashes.
+
+Reference example (fits 245 chars with the tail):
+
+```
+A founder ran the same ad on two platforms.
+Every free-trial signup cost 4x more on one.
+
+His rule: $30 a day per test.
+The day one platform costs double your cheapest, stop it.
+
+Check daily. A week is too long to wait.
+
+h/t @adriamatz
+```
+
+Character budget: the `question` arm adds the question's length to
+`llm.max_commentary_chars` so the lesson is never squeezed to fit (X's hard
+limit is 280).
 
 ## Data flow (summary)
 
