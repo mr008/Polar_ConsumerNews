@@ -230,6 +230,28 @@ posting:
   # profile timeline. The h/t @handle tail still credits the author.
   attribution_reply: false
 
+# GROWTH EXPERIMENTS (docs/superpowers/specs/2026-10-08-growth-experiments-design.md).
+# Per-post tests assign an arm to every draft by strict alternation (the first
+# arm = today's behavior = control); `volume` is an on/off period test. Graded
+# by `xbot experiments` and the weekly strategist memo (>=10 posts/arm or 21
+# days; >=30% lift in median 24h views names a winner). All OFF at merge;
+# rollout order: volume + author_bait, then image_card once Pillow is in CI.
+experiments:
+  image_card:
+    enabled: false
+    arms: [text, card]           # card = self-rendered 1200x675 PNG of our own text
+    started: 2026-10-09
+  author_bait:
+    enabled: false
+    arms: [tail, question]       # question = one closing question to @author, no h/t
+    started: 2026-10-09
+  volume:
+    enabled: false
+    period: true
+    started: 2026-10-09
+    threshold_delta: 0.05        # subtracted from thresholds.topic_fit_min / quote_worthy_min
+    per_run: 2                   # overrides posting.per_run while on (per_day still caps)
+
 # ONLINE CONTENT SOURCE. Web search finds tactical BLOG posts; a cheap model
 # summarizes each into a teaching brief; the briefs enter the SAME ranked pool as
 # X posts and publish as ORIGINAL teaching posts (no quote, no @handle h/t, no

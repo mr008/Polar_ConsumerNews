@@ -43,7 +43,7 @@ Two swappable boundaries keep it portable (and keep the risky parts isolated):
 xbot initdb | collect | score [--top N] | draft | review | publish | run
      | reply-scan | reply-queue | reply-nudge | snapshot | harvest
      | agent-smoke | detect [--json] | mechanic | curate | briefing
-     | strategist | list-sync [--dry-run] | report
+     | strategist | list-sync [--dry-run] | report | experiments [--json]
 ```
 `list-sync` builds/refreshes a PRIVATE curated read-List from author yield (keep =
 ever-posted or ever-scored >= --min-qw) so collection reads only worthwhile authors
@@ -77,6 +77,8 @@ without changing who you follow; flip `scoping.source_timeline: list` + `list_id
   (<3h), on-topic posts from >5K-follower followed accounts. The follower-growth
   lever (replies ≈27x a like). Hard caps + `replies.dry_run` rollout switch +
   same kill switch. Replies never contain links/hashtags/@mentions/praise-only.
+- **Voice is PLAIN-LANGUAGE, one point per post** (2026-10-08, owner: "I don't even understand this"). Reader = any founder/creator with no ads background. `safety.check_readability` (no bullets/jargon/long lines) is a hard gate; don't weaken it. Spec §6.
+- **Experiments are config-driven** (`experiments:`), arms alternate per draft, graded by `xbot experiments` + the strategist with a fixed rule (10/arm or 21 days, 30% median lift). Experiments never bypass a gate.
 - **Rollout:** manual `xbot review` first, then flip `mode.autonomous: true`.
 
 ## Config & secrets
@@ -195,6 +197,7 @@ dry_run` in a local, uncommitted config change.
   replied to OUR posts — the reply path the X policy still allows.
 - ✅ Autonomy overhaul Phases 0-2 merged (senses, governor, mechanic, curator
   shadow, strategist scaffold) — see `AUTONOMY.md`.
+- 🧪 Growth experiments merged 2026-10 (image card, author bait, volume) — all `enabled: false` at merge; see spec for rollout order. The live X one-shot media upload (`POST /2/media/upload`, OAuth 1.0a, multipart `media` + `media_category`) used by `image_card` has NOT yet been exercised; until verified, a failed card upload falls back to text with a `[publish] card skipped` log line.
 
 ## Conventions
 
