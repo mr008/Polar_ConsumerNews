@@ -28,9 +28,10 @@ class DryRunPublisher:
     def publish(self, draft: Draft, post: Post) -> dict:
         fake_id = _fake_id()
         text, fmt = compose_text(draft, post, self.cfg)
-        from ..experiments import arm  # lazy
+        from ..experiments import arm, enabled  # lazy
         media = False
-        if arm(draft.arms, "image_card") == "card":
+        if (self.cfg is not None and enabled(self.cfg, "image_card")
+                and arm(draft.arms, "image_card") == "card"):
             try:
                 from pathlib import Path
                 from .card import render_card

@@ -100,9 +100,8 @@ class ApiPublisher:
             if not main_id:
                 return {"ok": False, "id": "", "mode": "link"}
         else:
-            from ..experiments import arm  # lazy
             payload = {"text": text}
-            if arm(draft.arms, "image_card") == "card":
+            if self._card_on(draft):
                 media_id = self._card_media_id(session, draft)
                 if media_id:
                     payload["media"] = {"media_ids": [media_id]}
@@ -147,16 +146,22 @@ class ApiPublisher:
         data = resp.json().get("data", {}) or {}
         return str(data.get("id") or data.get("media_id_string") or "")
 
+    def _card_on(self, draft: Draft) -> bool:
+        """Card only while the test is ENABLED and the draft is in the card arm:
+        turning the test off also reaches card drafts already in the queue."""
+        from ..experiments import arm, enabled  # lazy
+        return (self.cfg is not None and enabled(self.cfg, "image_card")
+                and arm(draft.arms, "image_card") == "card")
+
     def _card_media_id(self, session, draft: Draft) -> str:
-        """Render + upload the card; '' on ANY non-account failure so the post
-        still goes out as text (spec §2: never block publishing on media)."""
+        """Render + upload the card; '' on ANY failure, AccountError included, so
+        the post still goes out as text (spec §2: media never stops publishing).
+        A real account problem surfaces from the text POST /2/tweets itself."""
         from .card import render_card  # lazy
         try:
             png = render_card(draft.commentary,
                               str(self.cfg.get("posting.card_handle", "") if self.cfg else ""))
             return self._upload_png(session, png)
-        except AccountError:
-            raise
         except Exception as e:
             print(f"  [publish] card skipped ({type(e).__name__}: {str(e)[:100]}) — posting text")
             return ""

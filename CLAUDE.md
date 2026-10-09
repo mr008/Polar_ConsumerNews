@@ -197,7 +197,14 @@ dry_run` in a local, uncommitted config change.
   replied to OUR posts — the reply path the X policy still allows.
 - ✅ Autonomy overhaul Phases 0-2 merged (senses, governor, mechanic, curator
   shadow, strategist scaffold) — see `AUTONOMY.md`.
-- 🧪 Growth experiments merged 2026-10 (image card, author bait, volume) — all `enabled: false` at merge; see spec for rollout order. The live X one-shot media upload (`POST /2/media/upload`, OAuth 1.0a, multipart `media` + `media_category`) used by `image_card` has NOT yet been exercised; until verified, a failed card upload falls back to text with a `[publish] card skipped` log line.
+- 🧪 Growth experiments merged 2026-10 (image card, author bait, volume) — all
+  `enabled: false` at merge; see spec for rollout order. The live X one-shot
+  media upload (`POST /2/media/upload`, OAuth 1.0a, multipart `media` +
+  `media_category`) used by `image_card` has NOT yet been exercised. ANY failed
+  render/upload (auth 401/402/403 included) posts text with a
+  `[publish] card skipped` log line and records the `text` arm; account
+  problems surface from the text post itself. Disabling `image_card` also
+  stops cards for drafts already queued.
 
 ## Conventions
 

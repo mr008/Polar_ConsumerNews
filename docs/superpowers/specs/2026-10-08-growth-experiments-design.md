@@ -104,9 +104,21 @@ Arm `card`:
   as tweets), then attach `{"media": {"media_ids": [id]}}` to the normal
   `{"text": …}` payload. Only the main post (hook) gets the image; thread
   parts stay text.
-- Failure handling: any upload error → post as text, arm recorded `text`,
-  warning in the run log. An upload 401/402/permission-403 goes through the
-  existing `_raise_if_account_error` → `AccountError` (run stops).
+- Failure handling: any render or upload error, including an upload
+  401/402/403, → post as text, arm recorded `text`, loud
+  `[publish] card skipped (…) — posting text` warning in the run log. The
+  upload never stops the run: a real account problem is surfaced by the text
+  `POST /2/tweets` itself (same credentials → `AccountError`, run stops), and an
+  upload-only failure (e.g. a rejected multipart signature) cannot block every
+  window. (Amended 2026-10-08 by the whole-branch review; the first draft
+  re-raised `AccountError` from the upload.)
+- Kill switch: the publishers attach/render the card only while
+  `experiments.image_card.enabled` is true AND the draft's arm is `card`;
+  disabling the test reaches card drafts already queued (they post as text,
+  recorded `text`).
+- A media post that X rejects with a non-account 4xx is retried once as text.
+  Timeouts and connection errors are NOT retried (X may have accepted the
+  card post; a text retry would duplicate it).
 - `DryRunPublisher` writes the PNG to the scratch/`data/` dir and prints its
   path.
 - Cost: billed as a normal $0.015 post. Media upload may carry a small

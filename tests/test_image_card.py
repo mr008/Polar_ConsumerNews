@@ -135,18 +135,67 @@ def test_text_arm_never_uploads():
 
 
 @needs_pillow
-def test_upload_account_error_stops_the_run():
-    from xbot.publish.publisher import AccountError
-
+@pytest.mark.parametrize("code", [401, 402, 403])
+def test_upload_account_error_never_stops_publishing(code, capsys):
+    # An upload-only auth failure (e.g. a rejected multipart signature) must
+    # not stop the run: the post goes out as text, and a REAL account problem
+    # surfaces from that text POST /2/tweets with the same credentials.
     class _Denied(_Session):
         def post(self, url, json=None, files=None, data=None, timeout=None):
             if url.endswith("/media/upload"):
-                return _Resp(402, {"error": "no credits"})
+                self.calls.append({"url": url, "json": json, "files": files, "data": data})
+                return _Resp(code, {"error": "app permission denied"})
             return super().post(url, json=json, files=files, data=data, timeout=timeout)
 
-    with pytest.raises(AccountError):
-        _api_publisher(_Denied()).publish(Draft(tweet_id="1", commentary=BODY, model="t",
-                                                arms={"image_card": "card"}), _post())
+    s = _Denied()
+    res = _api_publisher(s).publish(Draft(tweet_id="1", commentary=BODY, model="t",
+                                          arms={"image_card": "card"}), _post())
+    assert res["media"] is False and res["id"] == "t1"
+    tweet_calls = [c for c in s.calls if c["url"].endswith("/tweets")]
+    assert len(tweet_calls) == 1 and "media" not in tweet_calls[0]["json"]
+    out = capsys.readouterr().out
+    assert "[publish] card skipped (" in out and "posting text" in out
+
+
+CFG_OFF = NS({**CFG.as_dict(),
+              "experiments": {"image_card": {"enabled": False, "arms": ["text", "card"]}}})
+
+
+def test_card_arm_ignored_when_test_disabled():
+    # Kill switch: turning the test off reaches card drafts already queued.
+    s = _Session()
+    pub = _api_publisher(s)
+    pub.cfg = CFG_OFF
+    res = pub.publish(Draft(tweet_id="1", commentary=BODY, model="t",
+                            arms={"image_card": "card"}), _post())
+    assert res["media"] is False
+    assert not [c for c in s.calls if c["url"].endswith("/media/upload")]
+
+
+def test_dry_run_card_arm_ignored_when_test_disabled(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from xbot.publish.dryrun import DryRunPublisher
+    res = DryRunPublisher(CFG_OFF).publish(Draft(tweet_id="1", commentary=BODY, model="t",
+                                                 arms={"image_card": "card"}), _post())
+    assert res["media"] is False
+    assert not list(tmp_path.glob("data/cards/*.png"))
+
+
+def test_disabled_card_draft_records_text_in_features():
+    repo = SqliteRepository(":memory:"); repo.init_schema()
+    p = _post(); repo.upsert_post(p)
+    repo.save_score(Score(tweet_id="1", quote_score=0.8, judged=True))
+    repo.add_draft(Draft(tweet_id="1", commentary=BODY, model="t", safety_passed=True,
+                         arms={"image_card": "card"}))
+    s = _Session()
+    pub = _api_publisher(s)
+    pub.cfg = CFG_OFF
+    o = object.__new__(Orchestrator)
+    o.cfg, o.repo, o.publisher, o.judge_reasons = CFG_OFF, repo, pub, {}
+    assert o.publish_due()["status"] == "posted"
+    assert not [c for c in s.calls if c["url"].endswith("/media/upload")]
+    row = repo.conn.execute("SELECT arms FROM post_features").fetchone()
+    assert row["arms"] == '{"image_card": "text"}'
 
 
 class _Pub:
