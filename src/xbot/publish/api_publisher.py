@@ -140,8 +140,7 @@ class ApiPublisher:
         """Simple (non-chunked) v2 media upload. Returns the media id."""
         resp = session.post(MEDIA_UPLOAD,
                             files={"media": ("card.png", png, "image/png")},
-                            data={"media_category": "tweet_image",
-                                  "media_type": "image/png"},
+                            data={"media_category": "tweet_image"},
                             timeout=60)
         _raise_if_account_error(resp)
         resp.raise_for_status()

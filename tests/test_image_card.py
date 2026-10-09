@@ -1,7 +1,9 @@
 # tests/test_image_card.py
 """image_card experiment: self-rendered PNG attached to the main post, with a
 plain-text fallback that is RECORDED as the text arm (spec §2)."""
+import importlib.util
 import io
+import sys
 
 import pytest
 
@@ -11,7 +13,8 @@ from xbot.orchestrator import Orchestrator
 from xbot.publish.card import H, W, card_lines, render_card
 from xbot.storage.sqlite_repo import SqliteRepository
 
-pytest.importorskip("PIL")
+needs_pillow = pytest.mark.skipif(importlib.util.find_spec("PIL") is None,
+                                  reason="Pillow (media extra) not installed")
 
 BODY = ("A founder ran one ad on two platforms.\n\n"
         "He divided what he spent by the trials it brought in.\n\n"
@@ -32,12 +35,14 @@ def _png_size(png: bytes):
     return Image.open(io.BytesIO(png)).size
 
 
+@needs_pillow
 def test_render_card_is_1200x675_png():
     png = render_card(BODY, "polar")
     assert png[:8] == b"\x89PNG\r\n\x1a\n"
     assert _png_size(png) == (W, H)
 
 
+@needs_pillow
 def test_render_card_survives_empty_and_huge_text():
     assert _png_size(render_card("", "polar")) == (W, H)
     assert _png_size(render_card("word " * 400, "polar")) == (W, H)
@@ -68,7 +73,7 @@ class _Session:
         self.upload_ok, self.media_post_ok, self.calls = upload_ok, media_post_ok, []
 
     def post(self, url, json=None, files=None, data=None, timeout=None):
-        self.calls.append({"url": url, "json": json, "files": files})
+        self.calls.append({"url": url, "json": json, "files": files, "data": data})
         if url.endswith("/media/upload"):
             return _Resp(201, {"data": {"id": "m1"}}) if self.upload_ok \
                 else _Resp(500, {"error": "upload down"})
@@ -91,6 +96,7 @@ def _post():
                 author_follower_count=10, metrics=Metrics())
 
 
+@needs_pillow
 def test_api_publisher_attaches_media_in_card_arm():
     s = _Session()
     res = _api_publisher(s).publish(Draft(tweet_id="1", commentary=BODY, model="t",
@@ -98,6 +104,8 @@ def test_api_publisher_attaches_media_in_card_arm():
     assert res["media"] is True and res["id"] == "t1"
     tweet_call = [c for c in s.calls if c["url"].endswith("/tweets")][0]
     assert tweet_call["json"]["media"] == {"media_ids": ["m1"]}
+    upload_call = [c for c in s.calls if c["url"].endswith("/media/upload")][0]
+    assert upload_call["data"] == {"media_category": "tweet_image"}
 
 
 def test_api_publisher_falls_back_to_text_when_upload_fails():
@@ -109,6 +117,7 @@ def test_api_publisher_falls_back_to_text_when_upload_fails():
     assert "media" not in tweet_call["json"]
 
 
+@needs_pillow
 def test_api_publisher_retries_without_media_when_post_rejects_it():
     s = _Session(media_post_ok=False)
     res = _api_publisher(s).publish(Draft(tweet_id="1", commentary=BODY, model="t",
@@ -160,6 +169,7 @@ def test_features_record_the_arm_actually_posted():
     assert row["arms"] == '{"image_card": "text"}'
 
 
+@needs_pillow
 def test_dry_run_writes_png_for_card_arm(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     from xbot.publish.dryrun import DryRunPublisher
@@ -184,3 +194,31 @@ def test_web_posts_alternate_for_image_card():
         repo.add_draft(Draft(tweet_id=tid, commentary="x", model="t",
                              safety_passed=True, arms=arms))
     assert seen == ["text", "card"]
+
+
+@pytest.fixture
+def no_pillow(monkeypatch):
+    """Make `from PIL import ...` raise ImportError even when Pillow is installed."""
+    for mod in ("PIL", "PIL.Image", "PIL.ImageDraw", "PIL.ImageFont"):
+        monkeypatch.setitem(sys.modules, mod, None)
+
+
+def test_pillow_missing_api_publisher_posts_text(no_pillow, capsys):
+    s = _Session()
+    res = _api_publisher(s).publish(Draft(tweet_id="1", commentary=BODY, model="t",
+                                          arms={"image_card": "card"}), _post())
+    assert res["media"] is False and res["id"] == "t1"
+    assert not [c for c in s.calls if c["url"].endswith("/media/upload")]
+    tweet_calls = [c for c in s.calls if c["url"].endswith("/tweets")]
+    assert len(tweet_calls) == 1 and "media" not in tweet_calls[0]["json"]
+    assert "card skipped" in capsys.readouterr().out
+
+
+def test_pillow_missing_dry_run_writes_no_png(no_pillow, tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    from xbot.publish.dryrun import DryRunPublisher
+    res = DryRunPublisher(CFG).publish(Draft(tweet_id="1", commentary=BODY, model="t",
+                                             arms={"image_card": "card"}), _post())
+    assert res["media"] is False
+    assert not list(tmp_path.glob("data/cards/*.png"))
+    assert "card skipped" in capsys.readouterr().out
