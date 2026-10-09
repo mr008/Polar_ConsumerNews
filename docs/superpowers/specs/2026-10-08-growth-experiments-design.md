@@ -163,6 +163,15 @@ They are a set; graded as one.
 3. **`posting.per_run` 1 → 2**, so a window can catch up after an empty one.
    `per_day` stays 3.
 
+Implementation notes (controller ruling, 2026-10-08 whole-branch review):
+
+- The revision feedback that names the allowed numbers ("The ONLY numbers
+  you may write as digits are: …") applies with `volume` OFF too: it is the
+  normal one-revision feedback for any `fabricated_number` failure.
+- What `volume` adds is a third vet attempt (`max_vet_attempts` 2 → 3), and
+  that extra revision applies to EVERY failure kind (too long, fabricated
+  number, QA reject, readability), not only fabricated numbers.
+
 Graded against the two weeks before `started`: posts/day, median 24h views,
 followers/week. Revert rule: if median 24h views fall by more than a third,
 revert levers 2 and 3; keep lever 1 (it only rescues drafts that then pass the

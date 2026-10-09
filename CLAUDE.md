@@ -104,7 +104,7 @@ without changing who you follow; flip `scoping.source_timeline: list` + `list_id
 ```
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[llm,x,turso,dev]"   # dry-run only needs: pip install -e ".[dev]"
-pytest                                # 139 pass, 2 skip as of 2026-09-06
+pytest                                # 238 pass as of 2026-10-08
 cp .env.example .env                  # then fill in keys (see below)
 ```
 
@@ -204,7 +204,8 @@ dry_run` in a local, uncommitted config change.
   render/upload (auth 401/402/403 included) posts text with a
   `[publish] card skipped` log line and records the `text` arm; account
   problems surface from the text post itself. Disabling `image_card` also
-  stops cards for drafts already queued.
+  stops cards for drafts already queued. When enabling a test, set its
+  `started:` to the day you enable it (grading counts days from it).
 
 ## Conventions
 

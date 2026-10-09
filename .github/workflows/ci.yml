@@ -25,7 +25,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - run: pip install -e ".[dev]"
+      - run: pip install -e ".[dev,media]"   # media = Pillow, so the image_card tests run
       - run: python -m pytest tests/ -q
 
   bounds:

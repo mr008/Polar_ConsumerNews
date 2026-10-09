@@ -235,20 +235,21 @@ posting:
 # arm = today's behavior = control); `volume` is an on/off period test. Graded
 # by `xbot experiments` and the weekly strategist memo (>=10 posts/arm or 21
 # days; >=30% lift in median 24h views names a winner). All OFF at merge;
-# rollout order: volume + author_bait, then image_card once Pillow is in CI.
+# rollout order: volume + author_bait, then image_card (the publish workflow
+# already installs the `media` extra / Pillow; ci.yml installs it for tests).
 experiments:
   image_card:
     enabled: false
     arms: [text, card]           # card = self-rendered 1200x675 PNG of our own text
-    started: 2026-10-09
+    started: 2026-10-09          # set to the day you enable this test
   author_bait:
     enabled: false
     arms: [tail, question]       # question = one closing question to @author, no h/t
-    started: 2026-10-09
+    started: 2026-10-09          # set to the day you enable this test
   volume:
     enabled: false
     period: true
-    started: 2026-10-09
+    started: 2026-10-09          # set to the day you enable this test
     threshold_delta: 0.05        # subtracted from thresholds.topic_fit_min / quote_worthy_min
     per_run: 2                   # overrides posting.per_run while on (per_day still caps)
 
@@ -308,9 +309,11 @@ llm:
   curator_model: ""
   classifier_model: "claude-haiku-4-5-20251001"    # (legacy field; judge_model below is used)
   embeddings_model: "text-embedding-3-small"
-  # 262 = 280 minus the longest "h/t @handle" tail. Length follows clarity:
-  # ONE point explained fully (spec 2026-10-08 §6) needs the room. smart_trim
-  # still guarantees <= 280 after composition.
+  # The length the model AIMS for. Each post's hard cap is body_budget (in
+  # mention mode 280 minus the "h/t @handle" tail + slack, so it depends on the
+  # handle); the prompt target is min(this, body_budget). Length follows
+  # clarity: ONE point explained fully (spec 2026-10-08 §6) needs the room.
+  # smart_trim still guarantees <= 280 after composition.
   max_commentary_chars: 262
   temperature: 0.7
 

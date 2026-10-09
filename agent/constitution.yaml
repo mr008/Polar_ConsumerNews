@@ -49,6 +49,11 @@ config_bounds:
   listsync.web_queries: {constraint: "list edits allowed; teaching-first intent"}
   webcontent.queries: {constraint: "list edits allowed; teaching-first intent"}
   llm.curator_model: {constraint: "sonnet-class or opus-class only"}
+  # experiments.volume.* (enabled, per_run, threshold_delta) is OWNER-ONLY: it is
+  # deliberately not listed as mutable. threshold_delta is subtracted from the
+  # two thresholds above while the test is on, so it must keep the EFFECTIVE
+  # thresholds above their floors (topic_fit_min - delta >= 0.30,
+  # quote_worthy_min - delta >= 0.25).
 
 # ---------------------------------------------------------------- change rate
 # ENFORCED FROM PHASE 2 (validate_bounds.py reads git history).
