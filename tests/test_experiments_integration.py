@@ -71,7 +71,9 @@ def test_offline_draft_and_publish_with_all_experiments(tmp_path, monkeypatch):
     oks = [c for c in created if c["ok"]]
     assert len(oks) >= 2, [c["notes"] for c in created]
     assert {c["draft"].arms["image_card"] for c in oks} == {"text", "card"}
-    assert {c["draft"].arms["author_bait"] for c in oks} == {"tail", "question"}
+    # The template generator always writes the h/t tail, so a draft assigned the
+    # question arm is stored as what it will actually post: the tail arm.
+    assert {c["draft"].arms["author_bait"] for c in oks} == {"tail"}
     res = orch.publish_due()
     assert res["status"] == "posted" and res["count"] == 2      # volume: per_run 2
     rows = repo.conn.execute("SELECT arms FROM post_features").fetchall()

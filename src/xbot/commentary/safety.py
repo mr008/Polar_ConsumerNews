@@ -161,7 +161,7 @@ def check_commentary(post: Post, commentary: str, cfg: NS,
     # h/t tail / attribution line eat into the 280).
     from ..publish.publisher import (body_budget, part_budget, posting_format,
                                      strip_ht_tail)  # lazy: avoid import cycle
-    budget = body_budget(post, cfg, arms)
+    budget = body_budget(post, cfg, arms, commentary)
     body = strip_ht_tail(commentary)
     if len(body) > budget:
         return False, f"too_long:{len(body)}>{budget}"

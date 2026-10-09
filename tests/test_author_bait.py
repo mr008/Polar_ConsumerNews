@@ -46,9 +46,24 @@ def test_user_prompt_asks_for_question_in_question_arm():
 
 
 def test_question_arm_gets_the_bigger_budget():
-    assert body_budget(_post(), CFG, arms=Q) == 278
+    assert body_budget(_post(), CFG, arms=Q) == 278          # prompt time: assigned arm
     assert body_budget(_post(), CFG, arms=T) == 280 - (len("h/t @adriamatz") + 4)
     assert body_budget(_post(), CFG) == body_budget(_post(), CFG, arms=T)
+    # with the text, only a question that actually carries the @handle gets 278
+    assert body_budget(_post(), CFG, arms=Q,
+                       commentary="One ad.\n\nDid it hold, @adriamatz?") == 278
+    assert body_budget(_post(), CFG, arms=Q, commentary="One ad.\n\nDid it hold?") \
+        == body_budget(_post(), CFG, arms=T)
+
+
+def test_effective_author_bait_comes_from_the_text():
+    from xbot.publish.publisher import effective_author_bait
+    assert effective_author_bait("One ad.\n\nDid it hold, @adriamatz?", "adriamatz", Q) \
+        == "question"
+    assert effective_author_bait("One ad.\n\nDid it hold?", "adriamatz", Q) == "tail"
+    assert effective_author_bait("One ad.\n\nh/t @adriamatz", "adriamatz", Q) == "tail"
+    assert effective_author_bait("Did it hold, @adriamatz?", "adriamatz", T) == "tail"
+    assert effective_author_bait("Did it hold, @adriamatz?", "adriamatz", {}) == "tail"
 
 
 def test_compose_keeps_question_and_adds_no_tail():
@@ -76,11 +91,20 @@ def test_compose_credit_check_is_regex_safe():
 
 
 def test_check_commentary_uses_arm_budget():
-    body = "x" * 270
+    body = "x" * 245 + "\n\nDid it hold, @adriamatz?"
+    assert 262 < len(body) <= 278
     ok, why = check_commentary(_post(), body, CFG, arms=Q)
     assert ok, why
     ok, why = check_commentary(_post(), body, CFG, arms=T)
     assert not ok and why.startswith("too_long")
+
+
+def test_check_commentary_gives_handleless_question_the_tail_budget():
+    # The closing question lacks the @handle, so compose_text will append the
+    # h/t tail: the draft must fit the tail budget, not 278.
+    body = "x" * 255 + "\n\nDid it hold?"
+    ok, why = check_commentary(_post(), body, CFG, arms=Q)
+    assert not ok and why == f"too_long:{len(body)}>262", why
 
 
 class _Gen:
@@ -178,3 +202,60 @@ def test_web_post_ignores_question_arm():
     p = g._user_prompt(web, CFG, arms=Q)
     assert "question to @" not in p and "ONE short, specific question" not in p
     assert body_budget(web, CFG, arms=Q) == body_budget(web, CFG)
+
+
+# A 276-char question-arm draft whose closing question forgot the @handle
+# (whole-branch review F1): one sentence per line, the what-to-do line 4th.
+WHAT_TO_DO = "Before you scale, divide what you spend by the trials it brings in on each."
+HANDLELESS = ("A founder ran one ad on two platforms for his free trial.\n\n"
+              "On one, each trial cost him four times more.\n\n"
+              "Same ad, same offer, so only the platform differed.\n\n"
+              f"{WHAT_TO_DO}\n\n"
+              "Did the gap hold as you upped the budget?")
+
+
+def test_handleless_question_draft_is_relabelled_tail_and_composes_under_280():
+    assert len(HANDLELESS) == 276
+    draft = Draft(tweet_id="1", model="t", arms=dict(Q), commentary=HANDLELESS)
+    o = _orch(SqliteRepository(":memory:"))
+    out, ok, notes = o._vet_commentary(_post(), draft)
+    assert ok, notes
+    assert out.arms["author_bait"] == "tail"
+    text, _ = compose_text(out, _post(), CFG)
+    assert len(text) <= 280
+    assert text.endswith("\n\nh/t @adriamatz")
+    assert WHAT_TO_DO in text
+
+
+def _publish_one(o, repo, draft):
+    p = _post(); repo.upsert_post(p)
+    repo.save_score(Score(tweet_id="1", topic_fit=0.9, quote_worthy=0.8,
+                          quote_score=0.8, judged=True))
+    draft.safety_passed = True
+    draft_id = repo.add_draft(draft)
+    o._publish(draft_id, draft, p)
+    return repo.conn.execute("SELECT arms FROM post_features").fetchone()["arms"]
+
+
+def test_proper_question_draft_stays_question_through_vet_compose_features():
+    repo = SqliteRepository(":memory:"); repo.init_schema()
+    o = _orch(repo)
+    draft = Draft(tweet_id="1", model="t", arms=dict(Q),
+                  commentary="One ad ran on 2 platforms.\n\n"
+                             "One cost 4x more per trial.\n\n"
+                             "Test the cheap one first.\n\nDid the gap hold, @adriamatz?")
+    out, ok, notes = o._vet_commentary(_post(), draft)
+    assert ok and out.arms["author_bait"] == "question", notes
+    text, _ = compose_text(out, _post(), CFG)
+    assert text.endswith("Did the gap hold, @adriamatz?") and "h/t" not in text
+    assert _publish_one(o, repo, out) == '{"author_bait": "question"}'
+
+
+def test_features_record_tail_when_composed_post_carries_the_tail():
+    # A question-labelled draft queued before the fix, with no @handle: the
+    # composed post ends with the h/t tail, so the recorded arm is tail.
+    repo = SqliteRepository(":memory:"); repo.init_schema()
+    o = _orch(repo)
+    draft = Draft(tweet_id="1", model="t", arms=dict(Q),
+                  commentary="One ad, 2 platforms.\n\nDid the gap hold?")
+    assert _publish_one(o, repo, draft) == '{"author_bait": "tail"}'

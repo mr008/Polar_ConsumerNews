@@ -438,7 +438,7 @@ class Orchestrator:
                 qa_ok, qa_issue = qa_commentary(post, draft.full_text, self.cfg,
                                                 arms=draft.arms)
                 if qa_ok:
-                    return draft, True, "ok"
+                    return self._settle_author_bait(post, draft), True, "ok"
                 notes = qa_issue
             if attempt == attempts:
                 break
@@ -454,23 +454,30 @@ class Orchestrator:
 
         # Last resort for a PURE length failure: deterministic trim + re-check.
         if notes.startswith("too_long"):
-            from .publish.publisher import body_budget, mentions_handle, smart_trim
+            from .publish.publisher import body_budget, smart_trim
             draft.commentary = smart_trim(
-                draft.commentary, body_budget(post, self.cfg, draft.arms))
-            if (draft.arms.get("author_bait") == "question"
-                    and not mentions_handle(draft.commentary, post.author_handle)):
-                # The trim cut the closing question, so compose_text will add the
-                # h/t tail: relabel (the stored arm must match what is posted) and
-                # re-trim to the tail-style budget.
-                draft.arms = {**draft.arms, "author_bait": "tail"}
-                draft.commentary = smart_trim(
-                    draft.commentary, body_budget(post, self.cfg, draft.arms))
+                draft.commentary, body_budget(post, self.cfg, draft.arms, draft.commentary))
+            # If the trim cut the closing question, compose_text will add the h/t
+            # tail: re-trim to the (smaller) budget of the arm the text now carries.
+            draft.commentary = smart_trim(
+                draft.commentary, body_budget(post, self.cfg, draft.arms, draft.commentary))
             ok, notes2 = check_commentary(post, draft.commentary, self.cfg,
                                           parts=draft.parts, arms=draft.arms)
             if ok:
-                return draft, True, "ok(trimmed)"
+                return self._settle_author_bait(post, draft), True, "ok(trimmed)"
             notes = notes2
         return draft, False, notes
+
+    @staticmethod
+    def _settle_author_bait(post: Post, draft: Draft) -> Draft:
+        """The stored author_bait arm must match what will be POSTED: a question
+        draft whose text lacks the @handle (or carries an h/t tail) goes out with
+        the tail, so it is the tail arm. Untouched when the test assigned nothing."""
+        if "author_bait" in (draft.arms or {}):
+            from .publish.publisher import effective_author_bait
+            draft.arms = {**draft.arms, "author_bait": effective_author_bait(
+                draft.commentary, post.author_handle, draft.arms)}
+        return draft
 
     def _revision_feedback(self, post: Post, notes: str, arms: dict | None = None) -> str:
         if notes.startswith("too_long"):
@@ -648,6 +655,10 @@ class Orchestrator:
         arms = dict(draft.arms or {})
         if "image_card" in arms:  # record what went out, not what was planned
             arms["image_card"] = "card" if result.get("media") else "text"
+        if "author_bait" in arms:  # same rule: question only if no h/t tail went out
+            from .publish.publisher import compose_text, effective_author_bait
+            composed, _ = compose_text(draft, post, self.cfg)
+            arms["author_bait"] = effective_author_bait(composed, post.author_handle, arms)
         try:
             self._log_features(draft, post, our_id, arms=arms)
         except Exception as e:

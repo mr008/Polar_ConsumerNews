@@ -58,15 +58,35 @@ def mentions_handle(text: str, handle: str) -> bool:
     return bool(re.search(rf"@{re.escape(handle)}(?!\w)", text or "", re.IGNORECASE))
 
 
-def body_budget(post: Post, cfg, arms: dict | None = None) -> int:
+def effective_author_bait(commentary: str, handle: str, arms: dict | None) -> str:
+    """The author_bait arm the TEXT actually carries: 'question' only when the
+    draft is in the question arm AND its body names @handle with no h/t tail
+    (compose_text then adds no tail). Anything else posts with the h/t tail,
+    so it is the 'tail' arm whatever was assigned."""
+    from ..experiments import arm  # lazy: avoid import cycle
+    if arm(arms, "author_bait") != "question":
+        return "tail"
+    text = (commentary or "").strip()
+    if _HT_TAIL.search(text) or not mentions_handle(text, handle):
+        return "tail"
+    return "question"
+
+
+def body_budget(post: Post, cfg, arms: dict | None = None,
+                commentary: str | None = None) -> int:
     """Max commentary-body chars (h/t tail excluded) for this post in the active
     format. Mention mode keeps the tail inside the 280; link mode also loses the
     URL (23 chars on X). The author_bait 'question' arm carries the @handle in
-    its closing question instead of a tail, so it gets the whole 280."""
+    its closing question instead of a tail, so it gets the whole 280. With
+    `commentary`, the arm is the EFFECTIVE one (a question that forgot the
+    @handle gets the tail budget); without it (prompt time, nothing written
+    yet) the assigned arm is the target."""
     if is_web_source(post):
         return 280 - 2                       # original teaching post, no h/t tail
     from ..experiments import arm  # lazy: avoid import cycle
-    if arm(arms, "author_bait") == "question":
+    bait = (arm(arms, "author_bait") if commentary is None
+            else effective_author_bait(commentary, post.author_handle, arms))
+    if bait == "question":
         return 280 - 2
     fmt = posting_format(cfg)
     if fmt == "link":
