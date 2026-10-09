@@ -231,7 +231,7 @@ the embedded fallback prompt in `generate.py` is updated to stay byte-identical)
 8. Unchanged: point of view, straight tone, never fabricate, no links, SKIP
    sentinel, no em dashes.
 
-Reference example (256 chars with the tail; 271 with the question
+Reference example (250 chars with the tail; 265 with the question
 "Did the gap hold, @adriamatz?"):
 
 ```
