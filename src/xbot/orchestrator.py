@@ -631,8 +631,11 @@ class Orchestrator:
         self.repo.set_candidate(post.tweet_id, "posted")
         # Feature tag for the outcome harvester (AUTONOMY.md). Never allowed to
         # break publishing — the post is already live at this point.
+        arms = dict(draft.arms or {})
+        if "image_card" in arms:  # record what went out, not what was planned
+            arms["image_card"] = "card" if result.get("media") else "text"
         try:
-            self._log_features(draft, post, our_id, arms=dict(draft.arms or {}))
+            self._log_features(draft, post, our_id, arms=arms)
         except Exception as e:
             print(f"  [features] tagging failed ({type(e).__name__}) — post unaffected")
         return {"tweet_id": post.tweet_id, "our_id": our_id, "author": post.author_handle}

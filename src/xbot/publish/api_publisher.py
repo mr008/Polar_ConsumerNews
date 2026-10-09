@@ -19,6 +19,7 @@ from .publisher import (URL_RE, AccountError, attribution_text, compose_text,
                         wants_attribution_reply)
 
 API_BASE = "https://api.x.com/2"
+MEDIA_UPLOAD = "https://api.x.com/2/media/upload"
 
 
 def _raise_if_account_error(resp) -> None:
@@ -93,12 +94,29 @@ class ApiPublisher:
             raise ValueError("main post contains a URL — refusing (buried + 13x cost)")
 
         # Main post (mention: clean text; link: legacy URL-appended standalone).
+        media_posted = False
         if fmt == "link":
             main_id = self._publish_link(session, draft, text)
             if not main_id:
                 return {"ok": False, "id": "", "mode": "link"}
         else:
-            main_id = self._post(session, {"text": text}).get("id", "")
+            from ..experiments import arm  # lazy
+            payload = {"text": text}
+            if arm(draft.arms, "image_card") == "card":
+                media_id = self._card_media_id(session, draft)
+                if media_id:
+                    payload["media"] = {"media_ids": [media_id]}
+            try:
+                main_id = self._post(session, payload).get("id", "")
+                media_posted = "media" in payload
+            except AccountError:
+                raise
+            except Exception as e:
+                if "media" not in payload:
+                    raise
+                print(f"  [publish] media post rejected ({type(e).__name__}: "
+                      f"{str(e)[:100]}) — retrying as text")
+                main_id = self._post(session, {"text": text}).get("id", "")
 
         # Thread parts + attribution reply, chained under the main post. A part
         # failure stops the chain but never invalidates the already-posted hook.
@@ -115,7 +133,34 @@ class ApiPublisher:
                       f"{str(e)[:120]}) — hook stays up, chain stopped")
                 break
 
-        return {"ok": True, "id": main_id, "mode": fmt, "thread_ids": thread_ids}
+        return {"ok": True, "id": main_id, "mode": fmt, "thread_ids": thread_ids,
+                "media": media_posted}
+
+    def _upload_png(self, session, png: bytes) -> str:
+        """Simple (non-chunked) v2 media upload. Returns the media id."""
+        resp = session.post(MEDIA_UPLOAD,
+                            files={"media": ("card.png", png, "image/png")},
+                            data={"media_category": "tweet_image",
+                                  "media_type": "image/png"},
+                            timeout=60)
+        _raise_if_account_error(resp)
+        resp.raise_for_status()
+        data = resp.json().get("data", {}) or {}
+        return str(data.get("id") or data.get("media_id_string") or "")
+
+    def _card_media_id(self, session, draft: Draft) -> str:
+        """Render + upload the card; '' on ANY non-account failure so the post
+        still goes out as text (spec §2: never block publishing on media)."""
+        from .card import render_card  # lazy
+        try:
+            png = render_card(draft.commentary,
+                              str(self.cfg.get("posting.card_handle", "") if self.cfg else ""))
+            return self._upload_png(session, png)
+        except AccountError:
+            raise
+        except Exception as e:
+            print(f"  [publish] card skipped ({type(e).__name__}: {str(e)[:100]}) — posting text")
+            return ""
 
     def _publish_link(self, session, draft: Draft, text: str) -> str:
         """Legacy link mode. X sometimes rejects tweet-URLs like a quote — fall

@@ -28,6 +28,20 @@ class DryRunPublisher:
     def publish(self, draft: Draft, post: Post) -> dict:
         fake_id = _fake_id()
         text, fmt = compose_text(draft, post, self.cfg)
+        from ..experiments import arm  # lazy
+        media = False
+        if arm(draft.arms, "image_card") == "card":
+            try:
+                from pathlib import Path
+                from .card import render_card
+                out = Path("data/cards"); out.mkdir(parents=True, exist_ok=True)
+                path = out / f"{fake_id}.png"
+                path.write_bytes(render_card(
+                    draft.commentary, str(self.cfg.get("posting.card_handle", "") if self.cfg else "")))
+                print(f"  card: {path}")
+                media = True
+            except Exception as e:
+                print(f"  card skipped ({type(e).__name__}: {str(e)[:80]}) — text arm")
         label = {"quote": "quote tweet", "link": "standalone + source link",
                  "mention": "standalone (h/t mention, link in reply)"}[fmt]
         print("\n" + "=" * 64)
@@ -48,4 +62,5 @@ class DryRunPublisher:
         print(f"  source: {post.url}")
         print(f"  chars: {len(text)} | model: {draft.model} | id: {fake_id}")
         print("=" * 64)
-        return {"ok": True, "id": fake_id, "mode": fmt, "thread_ids": thread_ids}
+        return {"ok": True, "id": fake_id, "mode": fmt, "thread_ids": thread_ids,
+                "media": media}

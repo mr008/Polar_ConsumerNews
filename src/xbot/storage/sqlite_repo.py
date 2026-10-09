@@ -415,10 +415,12 @@ class SqliteRepository:
         """How many live drafts (pending or posted) carry each arm of one
         experiment — the alternation counter. Blocked/stale/failed drafts don't
         count: they never reached the feed."""
+        # Web posts have no author, so they never alternate in author_bait
+        # (forced to the control); every other test counts them like any post.
+        web_filter = " AND tweet_id NOT LIKE 'web:%'" if experiment == "author_bait" else ""
         rows = self.conn.execute(
             "SELECT arms FROM drafts WHERE status IN ('pending','posted') "
-            "AND arms IS NOT NULL AND arms != '' "
-            "AND tweet_id NOT LIKE 'web:%'").fetchall()   # web posts never alternate
+            "AND arms IS NOT NULL AND arms != ''" + web_filter).fetchall()
         counts: dict[str, int] = {}
         for r in rows:
             try:
