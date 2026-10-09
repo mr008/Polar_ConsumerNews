@@ -40,6 +40,26 @@ def _raise_if_account_error(resp) -> None:
             "update the secrets.\n" + body)
 
 
+class PostRejected(RuntimeError):
+    """X answered the write with a per-draft 403 (duplicate, reply limits, …) —
+    an HTTP rejection, so nothing was posted. RuntimeError for back-compat."""
+    def __init__(self, msg: str, status_code: int = 403):
+        super().__init__(msg)
+        self.status_code = status_code
+
+
+def _http_rejected(e: Exception) -> bool:
+    """True only when X answered with a 4xx that is NOT an account error, i.e.
+    the post certainly did not go out. Timeouts/connection errors are False:
+    X may have accepted the post before the response was lost."""
+    if isinstance(e, AccountError):
+        return False
+    code = getattr(e, "status_code", None)
+    if code is None:
+        code = getattr(getattr(e, "response", None), "status_code", None)
+    return isinstance(code, int) and 400 <= code < 500
+
+
 class ApiPublisher:
     def __init__(self, cfg=None):
         self.cfg = cfg
@@ -65,11 +85,11 @@ class ApiPublisher:
             # skip, not a "failed" write. The reply_settings target filter should
             # prevent most of these, but author-specific blocks still land here.
             if "reply" in low and "not allowed" in low:
-                raise RuntimeError(
+                raise PostRejected(
                     "reply_not_allowed: the conversation's reply settings block "
                     "this account from replying.\n" + body
                 )
-            raise RuntimeError(
+            raise PostRejected(
                 "403 from POST /2/tweets — check the app's Read+Write permission "
                 "and regenerate the Access Token if needed.\n" + body
             )
@@ -111,7 +131,9 @@ class ApiPublisher:
             except AccountError:
                 raise
             except Exception as e:
-                if "media" not in payload:
+                # Retry as text ONLY when X rejected the media post (4xx): after
+                # a timeout/connection error the card post may be live already.
+                if "media" not in payload or not _http_rejected(e):
                     raise
                 print(f"  [publish] media post rejected ({type(e).__name__}: "
                       f"{str(e)[:100]}) — retrying as text")

@@ -63,8 +63,10 @@ class _Resp:
         return self._data
 
     def raise_for_status(self):
-        if self.status_code >= 400:
-            raise RuntimeError(f"http {self.status_code}")
+        if self.status_code >= 400:  # like requests.HTTPError: carries .response
+            err = RuntimeError(f"http {self.status_code}")
+            err.response = self
+            raise err
 
 
 class _Session:
@@ -120,6 +122,45 @@ def test_api_publisher_falls_back_to_text_when_upload_fails():
 @needs_pillow
 def test_api_publisher_retries_without_media_when_post_rejects_it():
     s = _Session(media_post_ok=False)
+    res = _api_publisher(s).publish(Draft(tweet_id="1", commentary=BODY, model="t",
+                                          arms={"image_card": "card"}), _post())
+    assert res["media"] is False and res["id"] == "t1"
+    tweet_calls = [c for c in s.calls if c["url"].endswith("/tweets")]
+    assert len(tweet_calls) == 2 and "media" not in tweet_calls[1]["json"]
+
+
+@needs_pillow
+@pytest.mark.parametrize("exc", ["Timeout", "ConnectionError"])
+def test_media_post_timeout_is_not_retried_as_text(exc):
+    # X may have accepted the card post before the response was lost: a text
+    # retry would be a duplicate (or a duplicate-403 that fails the draft).
+    import requests
+    err = getattr(requests.exceptions, exc)
+
+    class _Lost(_Session):
+        def post(self, url, json=None, files=None, data=None, timeout=None):
+            if json and "media" in json:
+                self.calls.append({"url": url, "json": json, "files": files, "data": data})
+                raise err("read timed out")
+            return super().post(url, json=json, files=files, data=data, timeout=timeout)
+
+    s = _Lost()
+    with pytest.raises(err):
+        _api_publisher(s).publish(Draft(tweet_id="1", commentary=BODY, model="t",
+                                        arms={"image_card": "card"}), _post())
+    assert len([c for c in s.calls if c["url"].endswith("/tweets")]) == 1
+
+
+@needs_pillow
+def test_media_post_403_rejection_is_retried_as_text():
+    class _Forbidden(_Session):
+        def post(self, url, json=None, files=None, data=None, timeout=None):
+            if json and "media" in json:
+                self.calls.append({"url": url, "json": json, "files": files, "data": data})
+                return _Resp(403, {"detail": "media not allowed here"})
+            return super().post(url, json=json, files=files, data=data, timeout=timeout)
+
+    s = _Forbidden()
     res = _api_publisher(s).publish(Draft(tweet_id="1", commentary=BODY, model="t",
                                           arms={"image_card": "card"}), _post())
     assert res["media"] is False and res["id"] == "t1"
