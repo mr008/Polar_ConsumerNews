@@ -148,7 +148,8 @@ def test_refusal_style_reply_rejected():
 def test_thread_parts_validated():
     cfg = _cfg()
     post = _post()
-    good_parts = ["1. Rip trending sounds daily\n2. AI voiceover over stock b-roll\n"
+    # plain lines, no list markers: numbered lists fail the readability gate
+    good_parts = ["Rip trending sounds daily.\nPut an AI voiceover over stock b-roll.\n"
                   "Takeaway: volume beats polish."]
     ok, note = check_commentary(post, GOOD_COMMENTARY, cfg, parts=good_parts)
     assert ok is True, note

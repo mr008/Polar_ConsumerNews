@@ -423,10 +423,12 @@ class Orchestrator:
         return created
 
     def _vet_commentary(self, post: Post, draft: Draft) -> tuple[Draft, bool, str]:
-        """Deterministic safety gates + LLM QA gate, with ONE revision attempt.
-        Too-long / fabricated-number / QA-rejected drafts get a single editor-
-        feedback rewrite; a STILL-too-long rewrite gets a deterministic trim
-        (trimming beats blocking — too_long was 50% of all draft blocks)."""
+        """Deterministic safety gates + LLM QA gate, with up to
+        max_vet_attempts(cfg) - 1 revision attempts (1; 2 while the volume test
+        is on). Any failure (too long / fabricated number / QA-rejected / …)
+        gets an editor-feedback rewrite; a STILL-too-long last rewrite gets a
+        deterministic trim (trimming beats blocking — too_long was 50% of all
+        draft blocks)."""
         from .commentary.qa import qa_commentary
         from .experiments import max_vet_attempts  # lazy
         attempts = max_vet_attempts(self.cfg)

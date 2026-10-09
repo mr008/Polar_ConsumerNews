@@ -22,20 +22,21 @@ API_BASE = "https://api.x.com/2"
 MEDIA_UPLOAD = "https://api.x.com/2/media/upload"
 
 
-def _raise_if_account_error(resp) -> None:
+def _raise_if_account_error(resp, what: str = "POST /2/tweets") -> None:
     """401 (bad/revoked keys), 402 (pay-per-use balance) and the app-permission
     403 fail EVERY write — raise AccountError so the run stops instead of
-    burning the queue. Per-draft 403s (duplicate, reply/quote limits) fall through."""
+    burning the queue. Per-draft 403s (duplicate, reply/quote limits) fall through.
+    `what` names the endpoint in the message (the media upload passes its own)."""
     code, body = resp.status_code, resp.text[:300]
     if code == 401:
-        raise AccountError("401 from POST /2/tweets — X keys/tokens are invalid or "
+        raise AccountError(f"401 from {what} — X keys/tokens are invalid or "
                            "revoked; regenerate and update the secrets.\n" + body)
     if code == 402:
-        raise AccountError("402 from POST /2/tweets — X pay-per-use balance is "
+        raise AccountError(f"402 from {what} — X pay-per-use balance is "
                            "exhausted; top up credits in the developer portal.\n" + body)
     if code == 403 and "app permission" in body.lower():
         raise AccountError(
-            "403 from POST /2/tweets — the Access Token is Read-only. Set the app "
+            f"403 from {what} — the Access Token is Read-only. Set the app "
             "to 'Read and Write', THEN regenerate the Access Token + Secret and "
             "update the secrets.\n" + body)
 
@@ -163,7 +164,7 @@ class ApiPublisher:
                             files={"media": ("card.png", png, "image/png")},
                             data={"media_category": "tweet_image"},
                             timeout=60)
-        _raise_if_account_error(resp)
+        _raise_if_account_error(resp, "POST /2/media/upload")
         resp.raise_for_status()
         data = resp.json().get("data", {}) or {}
         return str(data.get("id") or data.get("media_id_string") or "")

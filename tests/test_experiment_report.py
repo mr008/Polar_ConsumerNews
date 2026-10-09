@@ -17,6 +17,22 @@ def test_verdict_rule():
     assert verdict({"n": 0, "median_views": 0.0}, {"n": 0, "median_views": 0.0}, 30) == "no data"
 
 
+def test_verdict_one_empty_arm_is_no_data():
+    # an empty arm has no median to compare against (it would read as 0 views)
+    empty, full = {"n": 0, "median_views": 0.0}, {"n": 5, "median_views": 40.0}
+    assert verdict(empty, full, 25) == "no data"
+    assert verdict(full, empty, 25) == "no data"
+
+
+def test_verdict_boundaries():
+    c = {"n": 10, "median_views": 10.0}
+    nine = {"n": 9, "median_views": 10.0}
+    assert verdict(nine, {"n": 9, "median_views": 30.0}, 20) == "continue"   # n=9 per arm
+    assert verdict(c, {"n": 9, "median_views": 30.0}, 20) == "continue"      # 20 days, n<10
+    assert verdict(c, {"n": 10, "median_views": 7.0}, 5) == "winner: control"  # exactly -30%
+    assert verdict(c, {"n": 10, "median_views": 13.0}, 5) == "winner: b"        # exactly +30%
+
+
 def _rows():
     base = date(2026, 10, 9)
     out = []
@@ -52,6 +68,19 @@ def test_summarize_per_post_and_period():
     assert "author_bait" not in [r["name"] for r in rep]
     text = render(rep)
     assert "image_card" in text and "card" in text and "volume" in text
+
+
+def test_summarize_survives_a_non_iso_started_date():
+    # "2026-10-9" (no zero padding) must not crash `xbot briefing`: the date is
+    # treated as unknown -> day 0, and the per-post verdict keeps going.
+    bad = NS({"experiments": {
+        "image_card": {"enabled": True, "arms": ["text", "card"], "started": "2026-10-9"},
+        "volume": {"enabled": True, "period": True, "started": "2026-10-9"}}})
+    rep = summarize(_rows(), bad, today=date(2026, 10, 17))
+    img = next(r for r in rep if r["name"] == "image_card")
+    assert img["days"] == 0 and img["verdict"] == "continue"
+    assert next(r for r in rep if r["name"] == "volume")["period"] is True
+    assert "image_card" in render(rep)
 
 
 def test_summarize_edge_cases():

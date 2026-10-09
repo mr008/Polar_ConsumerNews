@@ -130,12 +130,15 @@ def test_api_publisher_retries_without_media_when_post_rejects_it():
 
 
 @needs_pillow
-@pytest.mark.parametrize("exc", ["Timeout", "ConnectionError"])
+@pytest.mark.parametrize("exc", ["TimeoutError", "ConnectionError",
+                                 "requests.Timeout", "requests.ConnectionError"])
 def test_media_post_timeout_is_not_retried_as_text(exc):
     # X may have accepted the card post before the response was lost: a text
     # retry would be a duplicate (or a duplicate-403 that fails the draft).
-    import requests
-    err = getattr(requests.exceptions, exc)
+    if exc.startswith("requests."):   # the CI test job installs no `x` extra
+        err = getattr(pytest.importorskip("requests"), exc.split(".", 1)[1])
+    else:
+        err = {"TimeoutError": TimeoutError, "ConnectionError": ConnectionError}[exc]
 
     class _Lost(_Session):
         def post(self, url, json=None, files=None, data=None, timeout=None):
@@ -196,6 +199,7 @@ def test_upload_account_error_never_stops_publishing(code, capsys):
     assert len(tweet_calls) == 1 and "media" not in tweet_calls[0]["json"]
     out = capsys.readouterr().out
     assert "[publish] card skipped (" in out and "posting text" in out
+    assert "from POST /2/media/upload" in out         # names the failing endpoint
 
 
 CFG_OFF = NS({**CFG.as_dict(),

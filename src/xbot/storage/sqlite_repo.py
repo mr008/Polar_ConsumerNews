@@ -745,7 +745,9 @@ class SqliteRepository:
     def experiment_rows(self, within_days: int = 35) -> list[dict]:
         """Every post we published in the window, with its arms (from
         post_features) and its 24h outcome (None when not captured yet).
-        The grading substrate for `xbot experiments` and the briefing."""
+        The grading substrate for `xbot experiments` and the briefing.
+        Fixed window: a per-post test running longer than ~5 weeks loses its
+        earliest posts from the grade; fine under the 21-day decision rule."""
         cutoff = (utcnow() - timedelta(days=within_days)).isoformat()
         rows = self.conn.execute(
             """SELECT pl.our_tweet_id, pl.posted_at, f.arms,

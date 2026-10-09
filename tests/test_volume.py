@@ -35,6 +35,20 @@ def test_thresholds_unchanged_when_off_and_lowered_when_on():
     assert ok, why
 
 
+def test_threshold_exactly_at_lowered_floor_passes():
+    # A score exactly at the lowered floor must pass. Float subtraction can
+    # overshoot (0.40 - 0.05 == 0.35000000000000003), so the floor is rounded.
+    repo = _repo()
+    s = Score(tweet_id="1", topic_fit=0.40, quote_worthy=0.30)
+    ok, why = evaluate(_post(), s, _cfg(True), repo)          # live bases 0.45 / 0.35
+    assert ok, why
+    cfg = _cfg(True)
+    cfg = NS({**cfg.as_dict(), "thresholds": {"topic_fit_min": 0.40, "quote_worthy_min": 0.40}})
+    s = Score(tweet_id="1", topic_fit=0.35, quote_worthy=0.35)
+    ok, why = evaluate(_post(), s, cfg, repo)
+    assert ok, why
+
+
 def _orch(cfg, repo, gen=None):
     o = object.__new__(Orchestrator)
     o.cfg, o.repo, o.judge_reasons = cfg, repo, {}
@@ -82,7 +96,8 @@ def test_second_revision_only_when_volume_on_and_feedback_names_numbers():
     o = _orch(_cfg(True), _repo(), gen)
     draft, ok, notes = o._vet_commentary(_post(), gen.generate(_post()))
     assert ok, notes
-    assert "30" in gen.feedback[0] and "4" in gen.feedback[0]   # allowed numbers listed
+    # allowed numbers listed exactly (sorted; the source also carries tid "1")
+    assert "The ONLY numbers you may write as digits are: 1, 4, 30." in gen.feedback[0]
     assert len(gen.feedback) == 2
     gen = _Gen()
     o = _orch(_cfg(False), _repo(), gen)

@@ -15,9 +15,11 @@ def evaluate(post: Post, score: Score, cfg: NS, repo) -> tuple[bool, str]:
         return False, reason
 
     delta = threshold_delta(cfg)
-    if score.topic_fit < cfg.get("thresholds.topic_fit_min", 0.55) - delta:
+    # round(): float subtraction overshoots (0.40 - 0.05 = 0.35000000000000003),
+    # which would reject a score sitting exactly on the lowered floor.
+    if score.topic_fit < round(cfg.get("thresholds.topic_fit_min", 0.55) - delta, 4):
         return False, f"low_topic_fit:{score.topic_fit:.2f}"
-    if score.quote_worthy < cfg.get("thresholds.quote_worthy_min", 0.55) - delta:
+    if score.quote_worthy < round(cfg.get("thresholds.quote_worthy_min", 0.55) - delta, 4):
         return False, f"low_quote_worthy:{score.quote_worthy:.2f}"
 
     if post.is_reply:

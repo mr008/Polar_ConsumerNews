@@ -73,7 +73,9 @@ MENTION = re.compile(r"(?:^|\s)@\w+")
 JARGON = ["cpt", "cac", "pmf", "ltv", "roas", "arpu", "cpm", "cpa", "ctr",
           "mrr", "arr", "ugc"]
 MAX_WORDS_PER_LINE = 20
-_BULLET_LINE = re.compile(r"^\s*(?:•|-|\*)\s+")
+# Bullet markers AND numbered-list markers ("1." / "2)"); a line that merely
+# starts with a number ("4 times more per trial.") is prose, not a list.
+_BULLET_LINE = re.compile(r"^\s*(?:•|-|\*|\d+[.)])\s+")
 
 
 def check_readability(text: str) -> str:

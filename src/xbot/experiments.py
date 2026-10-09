@@ -107,13 +107,15 @@ def _stats(rows: list[dict]) -> dict:
 
 def verdict(control: dict, other: dict, days_running: int) -> str:
     """Spec rule: decide at >=10 posts per arm OR >=21 days; a |lift| >= 30%
-    in median 24h views names a winner, else 'no difference'."""
-    if control["n"] == 0 and other["n"] == 0:
+    in median 24h views names a winner, else 'no difference'. An arm with no
+    24h outcome has no median to compare, so either one empty -> 'no data'."""
+    if control["n"] == 0 or other["n"] == 0:
         return "no data"
     enough = (control["n"] >= MIN_N_PER_ARM and other["n"] >= MIN_N_PER_ARM) \
         or days_running >= MAX_DAYS
     if not enough:
         return "continue"
+    # Floor at 1 view: avoids divide-by-zero and absurd lifts off a near-zero control.
     base = max(control["median_views"], 1.0)
     lift = (other["median_views"] - control["median_views"]) / base
     if lift >= MIN_LIFT:
@@ -124,8 +126,14 @@ def verdict(control: dict, other: dict, days_running: int) -> str:
 
 
 def _day(iso: str):
+    """The date of an ISO timestamp, or None when it is not ISO (e.g. a
+    hand-typed `started: 2026-10-9`): treated as unknown, never a crash in
+    `xbot briefing` / the strategist build."""
     from datetime import date
-    return date.fromisoformat(str(iso)[:10])
+    try:
+        return date.fromisoformat(str(iso)[:10])
+    except ValueError:
+        return None
 
 
 def summarize(rows: list[dict], cfg, today=None) -> list[dict]:
@@ -139,7 +147,8 @@ def summarize(rows: list[dict], cfg, today=None) -> list[dict]:
             continue
         arms = arms_of(cfg, name)
         start = started(cfg, name)
-        days = (today - _day(start)).days if start else 0
+        d = _day(start) if start else None
+        days = (today - d).days if d else 0
         by_arm = {a: _stats([r for r in rows if (r.get("arms") or {}).get(name) == a])
                   for a in arms}
         v = verdict(by_arm[arms[0]], by_arm[arms[1]], days) if len(arms) > 1 else "n/a"
@@ -151,10 +160,11 @@ def summarize(rows: list[dict], cfg, today=None) -> list[dict]:
                        "days": days, "arms": by_arm, "verdict": v})
     if enabled(cfg, "volume"):
         start = started(cfg, "volume")
-        s = _day(start) if start else today
+        s = (_day(start) if start else None) or today
         before_from = s - timedelta(days=14)
-        on = [r for r in rows if _day(r["posted_at"]) >= s]
-        before = [r for r in rows if before_from <= _day(r["posted_at"]) < s]
+        dated = [(_day(r["posted_at"]), r) for r in rows]
+        on = [r for d, r in dated if d and d >= s]
+        before = [r for d, r in dated if d and before_from <= d < s]
         days_on = max((today - s).days, 1)
         report.append({
             "name": "volume", "period": True, "started": start, "days": days_on,

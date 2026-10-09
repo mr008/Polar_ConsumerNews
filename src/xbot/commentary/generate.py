@@ -113,7 +113,7 @@ FORMAT: teach ONE point per post, explained fully, in <= {max_chars} characters 
   - Plain words only. Never: CPT, CAC, PMF, LTV, ROAS, ARPU, CPM, CPA, CTR, MRR, ARR, UGC, "channel" as a noun, "kill" a test, "creative" as a noun. Say "platform", "stop the test", "the ad", "a month in revenue".
   - The last line says what to do. Then the credit tail.
   - Example (256 chars with the tail):
-      A founder ran one ad on two platforms to get people into his app's free trial.
+      A founder ran one ad on two platforms to get people into his free trial.
 
       He divided what he spent on each by the trials it brought in.
 

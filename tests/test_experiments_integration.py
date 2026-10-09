@@ -3,9 +3,8 @@ the template generator and the dry-run publisher: drafts get arms, a card PNG
 is written, features carry the arms actually posted, `experiments` renders.
 The full Orchestrator() constructor needs an LLM key for the judge, so the
 object is assembled by hand the way tests/test_publish_due.py does."""
+import importlib.util
 import pathlib
-
-import pytest
 
 from xbot.commentary.generate import TemplateCommentaryGenerator
 from xbot.config import NS, load_config
@@ -47,7 +46,6 @@ def _orch(cfg, repo):
 
 
 def test_offline_draft_and_publish_with_all_experiments(tmp_path, monkeypatch):
-    pytest.importorskip("PIL")
     monkeypatch.chdir(tmp_path)          # data/cards/ lands here, not in the repo
     cfg = _cfg()
     repo = SqliteRepository(":memory:"); repo.init_schema()
@@ -78,6 +76,10 @@ def test_offline_draft_and_publish_with_all_experiments(tmp_path, monkeypatch):
     assert res["status"] == "posted" and res["count"] == 2      # volume: per_run 2
     rows = repo.conn.execute("SELECT arms FROM post_features").fetchall()
     assert len(rows) == 2 and all(r["arms"] for r in rows)
-    assert list((tmp_path / "data" / "cards").glob("*.png"))    # one card arm posted
+    pngs = list(tmp_path.glob("data/cards/*.png"))
+    if importlib.util.find_spec("PIL") is not None:
+        assert pngs                                 # the card-arm post rendered a PNG
+    else:
+        assert not pngs                             # no Pillow: the card arm posts text
     text = render(summarize(repo.experiment_rows(), cfg))
     assert "image_card" in text and "volume" in text

@@ -51,6 +51,20 @@ def test_readability_rejects_bullets_jargon_and_long_lines():
     assert check_readability("A founder ran one ad on two platforms.\n\nMeasure it.") == ""
 
 
+def test_readability_line_length_boundary():
+    from xbot.commentary.safety import check_readability
+    assert check_readability(" ".join(["word"] * 20)) == ""
+    assert check_readability(" ".join(["word"] * 21)) == "format:line_too_long:21"
+
+
+def test_readability_rejects_numbered_lists_but_not_leading_numbers():
+    from xbot.commentary.safety import check_readability
+    assert check_readability("1. post daily\n2. reuse the winner") == "format:bullets"
+    assert check_readability("Steps:\n  2) reuse the winner") == "format:bullets"
+    assert check_readability("4 times more per trial.") == ""
+    assert check_readability("He paid 4 times more.\n\n30 a day bought it.") == ""
+
+
 def test_commentary_gate_applies_readability_rules():
     post = _post("he ran one ad on 2 platforms")
     ok, reason = check_commentary(post, "• 2 platforms, same ad\n• measure it", CFG)
