@@ -5,6 +5,7 @@ from __future__ import annotations
 from ..commentary.safety import classify_source
 from ..config import NS
 from ..dedup import author_in_cooldown, is_near_duplicate
+from ..experiments import threshold_delta
 from ..models import Post, Score
 
 
@@ -13,9 +14,10 @@ def evaluate(post: Post, score: Score, cfg: NS, repo) -> tuple[bool, str]:
     if not ok:
         return False, reason
 
-    if score.topic_fit < cfg.get("thresholds.topic_fit_min", 0.55):
+    delta = threshold_delta(cfg)
+    if score.topic_fit < cfg.get("thresholds.topic_fit_min", 0.55) - delta:
         return False, f"low_topic_fit:{score.topic_fit:.2f}"
-    if score.quote_worthy < cfg.get("thresholds.quote_worthy_min", 0.55):
+    if score.quote_worthy < cfg.get("thresholds.quote_worthy_min", 0.55) - delta:
         return False, f"low_quote_worthy:{score.quote_worthy:.2f}"
 
     if post.is_reply:

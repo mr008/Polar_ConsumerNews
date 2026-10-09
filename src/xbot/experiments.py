@@ -57,3 +57,22 @@ def assign_arms(cfg, repo, post: Post) -> dict[str, str]:
 
 def volume_on(cfg) -> bool:
     return enabled(cfg, "volume")
+
+
+# ---- volume period test (spec §4): three levers, graded as one ----
+
+def threshold_delta(cfg) -> float:
+    """Subtracted from thresholds.topic_fit_min / quote_worthy_min while on."""
+    return float(cfg.get("experiments.volume.threshold_delta", 0.05)) if volume_on(cfg) else 0.0
+
+
+def per_run(cfg) -> int:
+    """Drafts a publish window may post: posting.per_run, or the volume override."""
+    if volume_on(cfg):
+        return int(cfg.get("experiments.volume.per_run", 2))
+    return int(cfg.get("posting.per_run", 1))
+
+
+def max_vet_attempts(cfg) -> int:
+    """Generate + revisions the vet loop may spend on one draft (2 today)."""
+    return 3 if volume_on(cfg) else 2

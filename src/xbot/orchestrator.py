@@ -428,8 +428,10 @@ class Orchestrator:
         feedback rewrite; a STILL-too-long rewrite gets a deterministic trim
         (trimming beats blocking — too_long was 50% of all draft blocks)."""
         from .commentary.qa import qa_commentary
+        from .experiments import max_vet_attempts  # lazy
+        attempts = max_vet_attempts(self.cfg)
         notes = ""
-        for attempt in (1, 2):
+        for attempt in range(1, attempts + 1):
             ok, notes = check_commentary(post, draft.commentary, self.cfg,
                                          parts=draft.parts, arms=draft.arms)
             if ok:
@@ -438,13 +440,13 @@ class Orchestrator:
                 if qa_ok:
                     return draft, True, "ok"
                 notes = qa_issue
-            if attempt == 2:
+            if attempt == attempts:
                 break
             revise = getattr(self.generator, "revise", None)
             if revise is None:  # offline template generator can't rewrite
                 break
             arms_before = draft.arms  # the generator returns a fresh Draft
-            draft = revise(post, draft.full_text, self._revision_feedback(post, notes),
+            draft = revise(post, draft.full_text, self._revision_feedback(post, notes, arms_before),
                            arms=arms_before)
             draft.arms = arms_before
             if draft.commentary.strip().lower().startswith("skip:"):
@@ -470,19 +472,30 @@ class Orchestrator:
             notes = notes2
         return draft, False, notes
 
-    def _revision_feedback(self, post: Post, notes: str) -> str:
+    def _revision_feedback(self, post: Post, notes: str, arms: dict | None = None) -> str:
         if notes.startswith("too_long"):
             from .publish.publisher import body_budget
             return (f"It is too long ({notes}). Rewrite to UNDER "
-                    f"{body_budget(post, self.cfg)} characters: tighter hook, "
-                    f"max 2 bullets, one-line takeaway.")
+                    f"{body_budget(post, self.cfg, arms)} characters: keep the one "
+                    "point and its explanation, cut a sentence, never the "
+                    "what-to-do line.")
         if notes.startswith("fabricated_number"):
-            return ("You used a number that is not in the source post. Remove it; "
-                    "use only numbers that literally appear in the source.")
+            from .commentary.safety import _DIGITS
+            allowed = sorted(set(_DIGITS.findall(post.text or "")), key=int)
+            bad = notes.split(":", 1)[-1]
+            listed = ", ".join(allowed) if allowed else "(none - the source has no numbers)"
+            return (f"You used the number {bad}, which is not in the source post. "
+                    f"The ONLY numbers you may write as digits are: {listed}. Remove "
+                    "every other digit (say it in words without a figure, or drop it).")
         if notes.startswith("qa:"):
-            return (f"It failed editorial review: {notes[3:]}. Write a proper "
-                    "teaching breakdown of the tactic in the source — never address "
-                    "the author or reader, never ask for more content.")
+            from .experiments import arm
+            msg = (f"It failed editorial review: {notes[3:]}. Teach the ONE point "
+                   "from the source as a tiny story in plain words, ending with "
+                   "what to do.")
+            if arm(arms, "author_bait") == "question" and not is_web_source(post):
+                return msg + (f" Keep exactly one short closing question to "
+                              f"@{post.author_handle} as the last line.")
+            return msg + " Never address the author or reader, never ask for more content."
         return f"It was rejected ({notes}). Fix that while keeping every other rule."
 
     def _maybe_supersede(self, eligible, drafted_ids) -> int:
@@ -532,7 +545,8 @@ class Orchestrator:
         # Each scheduled window posts ONE draft (3 windows/day); per_day stays the
         # hard cap so a manual re-run can't overshoot.
         self.repo.expire_stale_drafts(self.cfg.get("posting.draft_max_age_hours", 48))
-        budget = min(remaining, self.cfg.get("posting.per_run", 1))
+        from .experiments import per_run  # lazy
+        budget = min(remaining, per_run(self.cfg))
         cooldown_days = self.cfg.get("posting.author_cooldown_days", 5)
         near_dup = self.cfg.get("thresholds.near_dup_similarity", 0.82)
         results, failures = [], []
