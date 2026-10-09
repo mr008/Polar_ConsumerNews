@@ -243,13 +243,13 @@ experiments:
     arms: [text, card]           # card = self-rendered 1200x675 PNG of our own text
     started: 2026-10-09          # set to the day you enable this test
   author_bait:
-    enabled: false
+    enabled: true
     arms: [tail, question]       # question = one closing question to @author, no h/t
-    started: 2026-10-09          # set to the day you enable this test
+    started: 2026-10-08          # set to the day you enable this test
   volume:
-    enabled: false
+    enabled: true
     period: true
-    started: 2026-10-09          # set to the day you enable this test
+    started: 2026-10-08          # set to the day you enable this test
     threshold_delta: 0.05        # subtracted from thresholds.topic_fit_min / quote_worthy_min
     per_run: 2                   # overrides posting.per_run while on (per_day still caps)
 
