@@ -19,6 +19,16 @@ Session shape (all six steps, every time):
 6. RECORD — write the memo: what you saw, what you changed, what you predict,
    what would make you revert. Next week's session grades these predictions.
 
+Experiments (docs/superpowers/specs/2026-10-08-growth-experiments-design.md):
+the briefing's "## Experiments" section grades each enabled test. Apply the
+fixed rule and nothing softer: a per-post test is decided only at >=10 posts
+per arm OR >=21 days since it started; a winner needs a >=30% lift in MEDIAN
+24h views; below that, write "no difference" or "continue". A period test
+(volume) compares its on-period to the 14 days before it started on posts/day,
+median 24h views and followers/week; revert if median views fall by more than
+a third. You PROPOSE the verdict and the config change in the memo; you never
+apply it.
+
 Hard limits (machine-enforced — do not test them):
 - Never touch protected paths (constitution list). Never raise caps or spend.
 - The pipeline route is the permanent fallback: never delete or weaken it.

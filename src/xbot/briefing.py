@@ -69,7 +69,7 @@ def build_briefing(repo, cfg) -> str:
         f = p["features"]
         tag = (f"route={f.get('route', '?')} kind={f.get('kind', '?')} "
                f"fmt={f.get('format', '?')} hour={f.get('window_hour', '?')} "
-               f"teach={f.get('teaching')}") if f else "(untagged)"
+               f"teach={f.get('teaching')} arms={f.get('arms') or '{}'}") if f else "(untagged)"
         lines += [f"### {p['posted_pt']} · h/t @{p['author']} · {tag}", "",
                   "```", p["text"], "```"]
         if p["outcomes"]:
@@ -81,6 +81,11 @@ def build_briefing(repo, cfg) -> str:
         else:
             lines.append("outcomes: (none captured yet)")
         lines.append("")
+
+    from .experiments import render, summarize
+    lines += ["## Experiments (spec 2026-10-08; rule: >=10 posts/arm or 21 days, "
+              "|median 24h-view lift| >= 30% names a winner)", "",
+              render(summarize(repo.experiment_rows(), cfg)), ""]
 
     lines += ["## Daily run totals (reads/judged/drafted/posted)", ""]
     for d in repo.daily_run_totals(WINDOW_DAYS):

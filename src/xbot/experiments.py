@@ -76,3 +76,115 @@ def per_run(cfg) -> int:
 def max_vet_attempts(cfg) -> int:
     """Generate + revisions the vet loop may spend on one draft (2 today)."""
     return 3 if volume_on(cfg) else 2
+
+
+# ---- grading (spec §5) ----
+
+MIN_N_PER_ARM = 10
+MAX_DAYS = 21
+MIN_LIFT = 0.30
+
+
+def _median(xs: list[float]) -> float:
+    xs = sorted(xs)
+    if not xs:
+        return 0.0
+    m = len(xs) // 2
+    return float(xs[m]) if len(xs) % 2 else (xs[m - 1] + xs[m]) / 2.0
+
+
+def _stats(rows: list[dict]) -> dict:
+    """Stats over posts that HAVE a 24h outcome; n counts only those."""
+    done = [r for r in rows if r.get("views") is not None]
+    views = [float(r["views"] or 0) for r in done]
+    eng = [float((r.get("likes") or 0) + (r.get("reposts") or 0)
+                 + (r.get("replies") or 0) + (r.get("quotes") or 0)) for r in done]
+    return {"n": len(done), "posted": len(rows),
+            "median_views": _median(views),
+            "mean_views": round(sum(views) / len(views), 1) if views else 0.0,
+            "mean_eng": round(sum(eng) / len(eng), 2) if eng else 0.0}
+
+
+def verdict(control: dict, other: dict, days_running: int) -> str:
+    """Spec rule: decide at >=10 posts per arm OR >=21 days; a |lift| >= 30%
+    in median 24h views names a winner, else 'no difference'."""
+    if control["n"] == 0 and other["n"] == 0:
+        return "no data"
+    enough = (control["n"] >= MIN_N_PER_ARM and other["n"] >= MIN_N_PER_ARM) \
+        or days_running >= MAX_DAYS
+    if not enough:
+        return "continue"
+    base = max(control["median_views"], 1.0)
+    lift = (other["median_views"] - control["median_views"]) / base
+    if lift >= MIN_LIFT:
+        return "winner: b"
+    if lift <= -MIN_LIFT:
+        return "winner: control"
+    return "no difference"
+
+
+def _day(iso: str):
+    from datetime import date
+    return date.fromisoformat(str(iso)[:10])
+
+
+def summarize(rows: list[dict], cfg, today=None) -> list[dict]:
+    """One dict per ENABLED test. Per-post tests: per-arm stats + verdict.
+    Period tests: the on-period vs the 14 days before `started`."""
+    from datetime import date, timedelta
+    today = today or date.today()
+    report = []
+    for name in PER_POST:
+        if not enabled(cfg, name):
+            continue
+        arms = arms_of(cfg, name)
+        start = started(cfg, name)
+        days = (today - _day(start)).days if start else 0
+        by_arm = {a: _stats([r for r in rows if (r.get("arms") or {}).get(name) == a])
+                  for a in arms}
+        v = verdict(by_arm[arms[0]], by_arm[arms[1]], days) if len(arms) > 1 else "n/a"
+        if v == "winner: b":
+            v = f"winner: {arms[1]}"
+        elif v == "winner: control":
+            v = f"winner: {arms[0]}"
+        report.append({"name": name, "period": False, "started": start,
+                       "days": days, "arms": by_arm, "verdict": v})
+    if enabled(cfg, "volume"):
+        start = started(cfg, "volume")
+        s = _day(start) if start else today
+        before_from = s - timedelta(days=14)
+        on = [r for r in rows if _day(r["posted_at"]) >= s]
+        before = [r for r in rows if before_from <= _day(r["posted_at"]) < s]
+        days_on = max((today - s).days, 1)
+        report.append({
+            "name": "volume", "period": True, "started": start, "days": days_on,
+            "on": {**_stats(on), "posts_per_day": round(len(on) / days_on, 2)},
+            "before": {**_stats(before), "posts_per_day": round(len(before) / 14, 2)},
+        })
+    return report
+
+
+def render(report: list[dict]) -> str:
+    """Markdown table(s) for the CLI and the briefing pack."""
+    if not report:
+        return "(no experiments enabled)"
+    lines = []
+    for t in report:
+        if t["period"]:
+            lines += [f"### {t['name']} (period, started {t['started']}, day {t['days']})", "",
+                      "| window | posts | posts/day | n w/ 24h | median 24h views | mean eng |",
+                      "|---|---|---|---|---|---|"]
+            for label in ("before", "on"):
+                s = t[label]
+                lines.append(f"| {label} | {s['posted']} | {s['posts_per_day']} | {s['n']} "
+                             f"| {s['median_views']} | {s['mean_eng']} |")
+        else:
+            lines += [f"### {t['name']} (started {t['started']}, day {t['days']}) — "
+                      f"verdict: {t['verdict']}", "",
+                      "| arm | posted | n w/ 24h | median 24h views | mean views | mean eng |",
+                      "|---|---|---|---|---|---|"]
+            for a, s in t["arms"].items():
+                lines.append(f"| {a} | {s['posted']} | {s['n']} | {s['median_views']} "
+                             f"| {s['mean_views']} | {s['mean_eng']} |")
+        lines.append("")
+    return "\n".join(lines).rstrip()

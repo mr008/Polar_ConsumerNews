@@ -742,6 +742,33 @@ class SqliteRepository:
         )
         self.conn.commit()
 
+    def experiment_rows(self, within_days: int = 35) -> list[dict]:
+        """Every post we published in the window, with its arms (from
+        post_features) and its 24h outcome (None when not captured yet).
+        The grading substrate for `xbot experiments` and the briefing."""
+        cutoff = (utcnow() - timedelta(days=within_days)).isoformat()
+        rows = self.conn.execute(
+            """SELECT pl.our_tweet_id, pl.posted_at, f.arms,
+                      o.views, o.likes, o.reposts, o.replies, o.quotes
+               FROM posted_log pl
+               LEFT JOIN post_features f ON f.our_tweet_id = pl.our_tweet_id
+               LEFT JOIN post_outcomes o ON o.our_tweet_id = pl.our_tweet_id
+                    AND o.milestone = '24h'
+               WHERE pl.posted_at >= ? AND pl.our_tweet_id != ''
+                 AND pl.our_tweet_id IS NOT NULL
+               ORDER BY pl.posted_at ASC""", (cutoff,)).fetchall()
+        out = []
+        for r in rows:
+            try:
+                arms = json.loads(r["arms"]) if r["arms"] else {}
+            except (ValueError, TypeError):
+                arms = {}
+            out.append({"our_tweet_id": r["our_tweet_id"], "posted_at": r["posted_at"],
+                        "arms": arms if isinstance(arms, dict) else {},
+                        "views": r["views"], "likes": r["likes"], "reposts": r["reposts"],
+                        "replies": r["replies"], "quotes": r["quotes"]})
+        return out
+
     # ---------- curator shadow (Phase 2: agentic route judged against pipeline) ----------
     def log_curator_verdicts(self, run_at: str, rows: list[dict]) -> None:
         for r in rows:

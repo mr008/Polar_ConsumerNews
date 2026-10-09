@@ -14,6 +14,7 @@
     xbot harvest       # capture engagement milestones for our own recent posts
     xbot agent-smoke   # prove subscription (OAuth) agent auth works headless
     xbot list-sync     # build/refresh the curated read-List from author yield (--dry-run to preview)
+    xbot experiments   # grade the growth experiments (per-arm 24h views, verdict)
     xbot report        # daily summary
 """
 from __future__ import annotations
@@ -350,6 +351,20 @@ def cmd_briefing(args):
     print(f"briefing: {len(text.splitlines())} lines -> {out}")
 
 
+def cmd_experiments(args):
+    """Grade the enabled growth experiments from harvested outcomes (spec
+    docs/superpowers/specs/2026-10-08-growth-experiments-design.md §5)."""
+    orch = _setup_light(args)
+    from .experiments import render, summarize
+    report = summarize(orch.repo.experiment_rows(), orch.cfg)
+    if args.json:
+        import json
+        print(json.dumps(report, indent=2, default=str))
+    else:
+        print(render(report))
+    return 0
+
+
 def cmd_strategist(args):
     """MEMO-ONLY Strategist session (AUTONOMY.md Phase 4 scaffold, run weekly).
     Reads the briefing + its own recent memos, writes agent/memos/<date>.md.
@@ -673,6 +688,9 @@ def main(argv=None):
     sub.add_parser("mechanic").set_defaults(func=cmd_mechanic)
     sub.add_parser("curate").set_defaults(func=cmd_curate)
     sub.add_parser("briefing").set_defaults(func=cmd_briefing)
+    p_exp = sub.add_parser("experiments")
+    p_exp.add_argument("--json", action="store_true", help="machine-readable report")
+    p_exp.set_defaults(func=cmd_experiments)
     sub.add_parser("strategist").set_defaults(func=cmd_strategist)
     sub.add_parser("reply-nudge").set_defaults(func=cmd_reply_nudge)
     p_ls = sub.add_parser("list-sync")
