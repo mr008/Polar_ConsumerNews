@@ -134,6 +134,7 @@ def test_text_arm_never_uploads():
     assert not [c for c in s.calls if c["url"].endswith("/media/upload")]
 
 
+@needs_pillow
 def test_upload_account_error_stops_the_run():
     from xbot.publish.publisher import AccountError
 
