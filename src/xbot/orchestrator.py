@@ -1062,8 +1062,12 @@ class Orchestrator:
     def _qualifies(self, r: dict) -> bool:
         """A consistent teacher: enough judged posts, AVERAGE teaching above the
         bar, and not a high-volume-low-quality flooder (the @athcanft/@tailopez
-        pattern — posts a flood, occasionally lands one)."""
+        pattern — posts a flood, occasionally lands one). Never an owner-excluded
+        handle (`listsync.exclude`)."""
         cfg = self.cfg
+        excluded = {h.lstrip("@").lower() for h in cfg.get("listsync.exclude", []) or []}
+        if (r.get("handle") or "").lstrip("@").lower() in excluded:
+            return False
         if r["judged"] < int(cfg.get("listsync.min_judged", 3)):
             return False
         if (r["judged"] > int(cfg.get("listsync.flood_judged", 60))

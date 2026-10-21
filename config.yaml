@@ -57,6 +57,10 @@ listsync:
   flood_judged: 60        # high-volume guard: an account past this many judged posts...
   flood_avg: 0.45         # ...must clear THIS higher avg, or it's a flooder (excluded)
   quiet_days: 21          # drop a member with no new post in this many days
+  # Owner-removed accounts: never (re-)promoted to the List. Unfollowing alone
+  # isn't enough — the weekly sync would add them back if they score well.
+  exclude:
+    - RevenueCat          # 2026-10-21: mostly event/keynote promos; unfollowed + removed
 
   # DISCOVERY SOURCE — how NEW candidate accounts get found each weekly sweep.
   #   web  = search the open web (Brave) for prominent teachers, then vet the new
