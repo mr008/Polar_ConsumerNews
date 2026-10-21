@@ -10,6 +10,7 @@ from ..models import Post
 
 @runtime_checkable
 class SourceAdapter(Protocol):
-    def fetch_timeline(self, limit: int = 120) -> list[Post]:
+    def fetch_timeline(self, limit: int = 120, since_id: str | None = None,
+                       source: str | None = None) -> list[Post]:
         """Return up to `limit` recent posts from the watched feed, normalized."""
         ...

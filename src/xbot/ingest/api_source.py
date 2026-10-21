@@ -50,9 +50,12 @@ class ApiSourceAdapter:
         from requests_oauthlib import OAuth1Session  # lazy import
         return OAuth1Session(self.ck, self.cs, self.at, self.ats)
 
-    def fetch_timeline(self, limit: int = 120, since_id: str | None = None) -> list[Post]:
+    def fetch_timeline(self, limit: int = 120, since_id: str | None = None,
+                       source: str | None = None) -> list[Post]:
+        """source="home" forces the home feed; otherwise the List when list_id
+        is set, else home."""
         limit = min(limit, self.max)
-        if self.list_id:
+        if self.list_id and source != "home":
             return self._fetch_list(limit, since_id)
         return self._fetch_home(limit, since_id)
 

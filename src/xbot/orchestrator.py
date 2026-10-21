@@ -48,9 +48,10 @@ def make_source(cfg: NS):
         if missing:
             raise SystemExit(f"mode.source=api needs these in .env: {', '.join(missing)}")
         # source_timeline=list reads a curated List instead of the home feed
-        # (cuts reads to chosen authors without changing who you follow).
+        # (cuts reads to chosen authors without changing who you follow);
+        # =both reads the List AND the home feed.
         list_id = (cfg.get("scoping.list_id", "") or "") \
-            if cfg.get("scoping.source_timeline", "home") == "list" else ""
+            if cfg.get("scoping.source_timeline", "home") in ("list", "both") else ""
         return ApiSourceAdapter(
             max_posts_per_day=cfg.get("scoping.max_posts_per_day", 120),
             list_id=list_id,
@@ -114,15 +115,26 @@ class Orchestrator:
         # PER-SOURCE since_id (state). The List and the discovery sweep both write
         # to the posts table, so a single global max_seen would let one corrupt the
         # other's dedup. Each read source tracks its own watermark instead.
-        src_key = "list" if self.cfg.get("scoping.source_timeline", "home") == "list" else "home"
-        since = self.repo.get_state(f"since_id:{src_key}", "") or self.repo.max_seen_tweet_id()
-        posts = self.source.fetch_timeline(cap, since_id=since)
-        self._store(posts)
-        if posts:
-            newest = str(max(int(p.tweet_id) for p in posts))
-            self.repo.set_state(f"since_id:{src_key}", newest)
-        self.repo.log_run("collect", read=len(posts))  # n paid API reads this run
-        return len(posts)
+        # `both`: the List first (fewer, higher-yield authors), then the home
+        # feed with what's left of the per-run ceiling.
+        mode = self.cfg.get("scoping.source_timeline", "home")
+        keys = ["list", "home"] if mode == "both" else ["list" if mode == "list" else "home"]
+        # Watermarks are read BEFORE any fetch: the max_seen fallback must not
+        # see posts the first source stored this run.
+        sinces = {k: self.repo.get_state(f"since_id:{k}", "") or self.repo.max_seen_tweet_id()
+                  for k in keys}
+        total = 0
+        for key in keys:
+            if total >= cap:
+                break
+            posts = self.source.fetch_timeline(cap - total, since_id=sinces[key], source=key)
+            self._store(posts)
+            if posts:
+                newest = str(max(int(p.tweet_id) for p in posts))
+                self.repo.set_state(f"since_id:{key}", newest)
+            total += len(posts)
+        self.repo.log_run("collect", read=total)  # n paid API reads this run
+        return total
 
     def discovery_sweep(self) -> int:
         """Find good accounts you don't yet read, so they can be auto-promoted to

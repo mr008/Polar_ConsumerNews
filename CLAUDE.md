@@ -47,7 +47,8 @@ xbot initdb | collect | score [--top N] | draft | review | publish | run
 ```
 `list-sync` builds/refreshes a PRIVATE curated read-List from author yield (keep =
 ever-posted or ever-scored >= --min-qw) so collection reads only worthwhile authors
-without changing who you follow; flip `scoping.source_timeline: list` + `list_id` to use it.
+without changing who you follow; `scoping.source_timeline: list` reads only it, `both`
+(live since 2026-10-21) reads the List then the home feed, each with its own since_id.
 `python -m xbot <cmd>` also works. NOTE: config.yaml is LIVE (api source/publisher
 + Turso when TURSO_DATABASE_URL is set) — local runs touch production state.
 
