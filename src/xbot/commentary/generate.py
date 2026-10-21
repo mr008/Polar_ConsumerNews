@@ -49,6 +49,19 @@ def _omit_temperature(model: str) -> bool:
     return any(tag in m for tag in _NO_SAMPLING)
 
 
+# Fable/Mythos ALWAYS think, and thinking spends from max_tokens — a 320 cap
+# can be used up before the post is written (empty reply). Give them headroom;
+# post length is still enforced by the prompt + smart_trim, not max_tokens.
+_ALWAYS_THINKS = ("fable-5", "mythos-5")
+
+
+def _commentary_max_tokens(model: str, allow_thread: bool) -> int:
+    m = (model or "").lower()
+    if any(tag in m for tag in _ALWAYS_THINKS):
+        return 8000
+    return 900 if allow_thread else 320
+
+
 def openai_chat(client, *, model: str, messages: list, max_tokens: int,
                 temperature=None):
     """chat.completions.create that adapts to models which reject `temperature`.
@@ -309,8 +322,9 @@ class OpenAICompatGenerator:
             kwargs["base_url"] = self.base_url
         client = OpenAI(**kwargs)
         resp = openai_chat(client, model=self.model, temperature=self.temperature,
-                           max_tokens=900 if allow_thread else 320, messages=messages)
-        raw = resp.choices[0].message.content.strip()
+                           max_tokens=_commentary_max_tokens(self.model, allow_thread),
+                           messages=messages)
+        raw = (resp.choices[0].message.content or "").strip()
         hook, parts = split_parts(raw, self.cfg) if allow_thread else (raw, [])
         return Draft(tweet_id=post.tweet_id, commentary=hook, parts=parts,
                      model=f"{self.provider}:{self.model}")

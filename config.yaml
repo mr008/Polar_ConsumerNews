@@ -303,7 +303,7 @@ voice:
 
 llm:
   provider: anthropic                   # anthropic | groq | xai | gemini | openai | auto
-  commentary_model: "claude-sonnet-5"              # Sonnet 5 — the public voice (rejects temperature; handled in openai_chat)
+  commentary_model: "claude-fable-5-1"             # Fable 5.1 — the public voice (rejects temperature + always thinks; both handled in generate.py)
   # Curator session model (headless Claude Code alias, e.g. sonnet | opus).
   # Empty = the CLI's default. Strategist-tunable within constitution bounds.
   curator_model: ""
@@ -354,7 +354,7 @@ replies:
   min_topic_fit: 0.45
   min_teaching: 0.2            # lighter than the QT bar — we're adding value, not curating
   max_reply_chars: 240
-  model: "claude-sonnet-5"     # the public voice — same as commentary
+  model: "claude-fable-5-1"    # the public voice — same as commentary
   exclude_authors: []
 
 # REPLY-BACK (2026-09-21): auto-reply to people who reply to OUR posts. This is
