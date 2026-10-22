@@ -176,6 +176,12 @@ dry_run` in a local, uncommitted config change.
    publish. With `mode.publisher: api`, a missing key raises `LLMUnavailable`
    (draft/publish/reply-back exit 2, `::error` annotation, run goes RED) and
    publish-time QA fails closed. Offline sample/dry_run keeps the template path.
+13. **Turso drops idle keep-alive sockets** (3 red runs 2026-10-17→22, collect
+   and web-content). After a slow step (LLM call, X read) the next query on the
+   stale pooled connection raised `aiohttp ServerDisconnectedError` and killed
+   the run. `_TursoConnection` now reconnects + retries transient connection
+   errors (3 attempts, `[turso] ... reconnecting` log line); SQL errors still
+   raise immediately. Tests: `tests/test_turso_retry.py`.
 
 ## Phase status
 
