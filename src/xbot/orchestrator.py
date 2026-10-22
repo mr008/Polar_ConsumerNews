@@ -248,22 +248,32 @@ class Orchestrator:
         cands = find_article_candidates(
             cfg.get("webcontent.queries", []) or [], key,
             provider=cfg.get("webcontent.provider", "brave"),
-            per_query=int(cfg.get("webcontent.results_per_query", 15)))
+            per_query=int(cfg.get("webcontent.results_per_query", 15)),
+            freshness=str(cfg.get("webcontent.freshness", "") or ""),
+            pause=float(cfg.get("webcontent.query_pause_seconds", 0) or 0))
         cap = int(cfg.get("webcontent.max_new_per_run", 3))
         min_chars = int(cfg.get("webcontent.min_article_chars", 400))
-        posts, added = [], 0
+        posts, added, seen, rejected = [], 0, 0, 0
         for url, title, blurb in cands:
             if added >= cap:
                 break
             wid = web_id(url)
-            if self.repo.has_posted(wid) or self.repo.get_post(wid) is not None:
-                continue                       # already posted or already a candidate
+            if (self.repo.has_posted(wid) or self.repo.get_post(wid) is not None
+                    or self.repo.get_state(f"web_skip:{wid}", "")):
+                seen += 1
+                continue                       # posted, a candidate, or rejected before
             brief = summarize_article(title, blurb, url, cfg, min_chars=min_chars)
-            if not brief:                      # SKIP / thin / no key
+            if brief == "":                    # nothing to teach: never pay for it again
+                self.repo.set_state(f"web_skip:{wid}", "1")
+                rejected += 1
+                continue
+            if not brief:                      # no key / LLM error: retry next run
                 continue
             posts.append(to_web_post(url, brief))
             added += 1
         self._store(posts)
+        print(f"  [web-content] {len(cands)} search results: {seen} seen before, "
+              f"{rejected} newly rejected, {added} added")
         self.repo.log_run("collect", read=0, detail=f"web content: +{added} of "
                           f"{len(cands)} candidates")
         if posts:
@@ -436,15 +446,18 @@ class Orchestrator:
 
     def _vet_commentary(self, post: Post, draft: Draft) -> tuple[Draft, bool, str]:
         """Deterministic safety gates + LLM QA gate, with up to
-        max_vet_attempts(cfg) - 1 revision attempts (1; 2 while the volume test
-        is on). Any failure (too long / fabricated number / QA-rejected / …)
+        max_vet_attempts(cfg) - 1 revision attempts (posting.max_vet_attempts;
+        3 while the volume test is on). Any failure (too long / fabricated number / QA-rejected / …)
         gets an editor-feedback rewrite; a STILL-too-long last rewrite gets a
         deterministic trim (trimming beats blocking — too_long was 50% of all
-        draft blocks)."""
+        draft blocks). A clean author_bait 'question' draft that forgot its
+        closing question gets one rewrite to add it; if that rewrite doesn't
+        come out clean, the original clean draft is kept (as the tail arm)."""
         from .commentary.qa import qa_commentary
         from .experiments import max_vet_attempts  # lazy
         attempts = max_vet_attempts(self.cfg)
         notes = ""
+        held = None  # clean draft kept while we ask for its missing question
         for attempt in range(1, attempts + 1):
             ok, notes = check_commentary(post, draft.commentary, self.cfg,
                                          parts=draft.parts, arms=draft.arms)
@@ -452,8 +465,12 @@ class Orchestrator:
                 qa_ok, qa_issue = qa_commentary(post, draft.full_text, self.cfg,
                                                 arms=draft.arms)
                 if qa_ok:
-                    return self._settle_author_bait(post, draft), True, "ok"
-                notes = qa_issue
+                    if held is None and attempt < attempts and self._question_dropped(post, draft):
+                        held, notes = draft, "question_missing"
+                    else:
+                        return self._settle_author_bait(post, draft), True, "ok"
+                else:
+                    notes = qa_issue
             if attempt == attempts:
                 break
             revise = getattr(self.generator, "revise", None)
@@ -464,7 +481,11 @@ class Orchestrator:
                            arms=arms_before)
             draft.arms = arms_before
             if draft.commentary.strip().lower().startswith("skip:"):
+                if held is not None:
+                    return self._settle_author_bait(post, held), True, "ok"
                 return draft, False, f"no_material:{draft.commentary.strip()[5:].strip()[:80]}"
+        if held is not None:  # the add-the-question rewrite failed a gate
+            return self._settle_author_bait(post, held), True, "ok"
 
         # Last resort for a PURE length failure: deterministic trim + re-check.
         if notes.startswith("too_long"):
@@ -493,7 +514,24 @@ class Orchestrator:
                 draft.commentary, post.author_handle, draft.arms)}
         return draft
 
+    @staticmethod
+    def _question_dropped(post: Post, draft: Draft) -> bool:
+        """In the author_bait 'question' arm, but the text carries no question to
+        @author — it would post with the h/t tail and count as the tail arm."""
+        from .experiments import arm
+        from .publish.publisher import effective_author_bait
+        return (arm(draft.arms, "author_bait") == "question" and not is_web_source(post)
+                and effective_author_bait(draft.commentary, post.author_handle,
+                                          draft.arms) == "tail")
+
     def _revision_feedback(self, post: Post, notes: str, arms: dict | None = None) -> str:
+        if notes.startswith("question_missing"):
+            from .publish.publisher import body_budget
+            return (f"Keep the same point and wording, but end with ONE short, "
+                    f"specific question to @{post.author_handle} about a concrete "
+                    f"claim in their post, as its own last line. Do not write "
+                    f"'h/t'. Stay under {body_budget(post, self.cfg, arms)} "
+                    f"characters in total; cut a sentence if you must.")
         if notes.startswith("too_long"):
             from .publish.publisher import body_budget
             return (f"It is too long ({notes}). Rewrite to UNDER "
@@ -658,10 +696,14 @@ class Orchestrator:
         return {"status": "rejected", "draft_id": draft_id}
 
     def _publish(self, draft_id: int, draft: Draft, post: Post) -> dict:
+        from .publish.publisher import compose_text
         result = self.publisher.publish(draft, post)
         our_id = result.get("id", "")
-        self.repo.log_posted(post.tweet_id, our_id, post.author_handle, post.text,
-                             draft.full_text)
+        # Log what went OUT: compose_text adds the h/t tail at send time, so the
+        # raw draft text lacks it (the strategist misread that as mislabeled arms).
+        composed, _ = compose_text(draft, post, self.cfg)
+        sent = "\n\n".join([composed, *draft.parts]) if draft.parts else composed
+        self.repo.log_posted(post.tweet_id, our_id, post.author_handle, post.text, sent)
         self.repo.set_draft_status(draft_id, "posted")
         self.repo.set_candidate(post.tweet_id, "posted")
         # Feature tag for the outcome harvester (AUTONOMY.md). Never allowed to
@@ -670,24 +712,24 @@ class Orchestrator:
         if "image_card" in arms:  # record what went out, not what was planned
             arms["image_card"] = "card" if result.get("media") else "text"
         if "author_bait" in arms:  # same rule: question only if no h/t tail went out
-            from .publish.publisher import compose_text, effective_author_bait
-            composed, _ = compose_text(draft, post, self.cfg)
+            from .publish.publisher import effective_author_bait
             arms["author_bait"] = effective_author_bait(composed, post.author_handle, arms)
         try:
-            self._log_features(draft, post, our_id, arms=arms)
+            self._log_features(draft, post, our_id, arms=arms, text=sent)
         except Exception as e:
             print(f"  [features] tagging failed ({type(e).__name__}) — post unaffected")
         return {"tweet_id": post.tweet_id, "our_id": our_id, "author": post.author_handle}
 
     def _log_features(self, draft: Draft, post: Post, our_id: str,
-                      arms: dict | None = None) -> None:
+                      arms: dict | None = None, text: str | None = None) -> None:
         """Record WHAT KIND of post just went out, so harvested outcomes can be
-        attributed to editorial choices (format, hook, slot, source) later."""
+        attributed to editorial choices (format, hook, slot, source) later.
+        `text` = the text as sent (defaults to the raw draft)."""
         if not our_id:
             return  # dry-run / review modes have nothing to harvest against
         from .models import to_local, utcnow
         score = self.repo.get_score(post.tweet_id)
-        text = draft.full_text
+        text = text if text is not None else draft.full_text
         self.repo.log_features({
             "our_tweet_id": our_id,
             "source_tweet_id": post.tweet_id,

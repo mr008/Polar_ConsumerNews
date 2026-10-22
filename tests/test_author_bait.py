@@ -259,3 +259,65 @@ def test_features_record_tail_when_composed_post_carries_the_tail():
     draft = Draft(tweet_id="1", model="t", arms=dict(Q),
                   commentary="One ad, 2 platforms.\n\nDid the gap hold?")
     assert _publish_one(o, repo, draft) == '{"author_bait": "tail"}'
+
+
+# ---- question arm: one rewrite to add a forgotten question; log the sent text ----
+
+class _ReviseGen(_Gen):
+    """Its revision appends the missing closing question — or, with bad=True,
+    writes a number not in the source so the rewrite fails a gate."""
+    def __init__(self, bad=False):
+        super().__init__()
+        self.bad, self.feedback = bad, []
+
+    def revise(self, post, previous, feedback, arms=None):
+        self.feedback.append(feedback)
+        if self.bad:
+            return Draft(tweet_id=post.tweet_id, model="fake", commentary="It cost 99x more.")
+        return Draft(tweet_id=post.tweet_id, model="fake",
+                     commentary=f"{previous}\n\nDid the gap hold, @{post.author_handle}?")
+
+
+QUESTIONLESS = ("One ad ran on 2 platforms.\n\nOne cost 4x more per trial.\n\n"
+                "Test the cheap one first.")
+
+
+def test_question_arm_draft_missing_its_question_gets_one_rewrite():
+    o = _orch(SqliteRepository(":memory:"))
+    o.generator = _ReviseGen()
+    draft = Draft(tweet_id="1", model="t", arms=dict(Q), commentary=QUESTIONLESS)
+    out, ok, notes = o._vet_commentary(_post(), draft)
+    assert ok, notes
+    assert out.arms["author_bait"] == "question"
+    assert out.commentary.endswith("Did the gap hold, @adriamatz?")
+    assert len(o.generator.feedback) == 1
+    assert "question to @adriamatz" in o.generator.feedback[0]
+
+
+def test_failed_question_rewrite_keeps_the_clean_original_as_tail():
+    o = _orch(SqliteRepository(":memory:"))
+    o.generator = _ReviseGen(bad=True)
+    draft = Draft(tweet_id="1", model="t", arms=dict(Q), commentary=QUESTIONLESS)
+    out, ok, notes = o._vet_commentary(_post(), draft)
+    assert ok, notes
+    assert out.commentary == QUESTIONLESS and out.arms["author_bait"] == "tail"
+
+
+def test_tail_arm_draft_is_never_asked_for_a_question():
+    o = _orch(SqliteRepository(":memory:"))
+    o.generator = _ReviseGen()
+    draft = Draft(tweet_id="1", model="t", arms=dict(T), commentary=QUESTIONLESS)
+    out, ok, _ = o._vet_commentary(_post(), draft)
+    assert ok and o.generator.feedback == [] and out.commentary == QUESTIONLESS
+
+
+def test_posted_log_and_features_store_the_text_as_sent():
+    # The h/t tail is added at send time; the log must carry it, or the
+    # strategist reads tail posts as "no h/t in the body" (2026-10-19 memo).
+    repo = SqliteRepository(":memory:"); repo.init_schema()
+    o = _orch(repo)
+    draft = Draft(tweet_id="1", model="t", arms=dict(T), commentary=QUESTIONLESS)
+    _publish_one(o, repo, draft)
+    sent = repo.conn.execute("SELECT commentary FROM posted_log").fetchone()["commentary"]
+    assert sent == QUESTIONLESS + "\n\nh/t @adriamatz"
+    assert repo.conn.execute("SELECT chars FROM post_features").fetchone()["chars"] == len(sent)

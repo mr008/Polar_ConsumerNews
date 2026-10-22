@@ -207,6 +207,12 @@ dry_run` in a local, uncommitted config change.
   problems surface from the text post itself. Disabling `image_card` also
   stops cards for drafts already queued. When enabling a test, set its
   `started:` to the day you enable it (grading counts days from it).
+  2026-10-21: `volume` OFF (confounded with the plain-voice gate); its floors
+  (0.40/0.30) and 3 vet attempts are now the defaults, per_run stays 1.
+  author_bait: a clean question-arm draft missing its question gets one
+  add-the-question rewrite; `posted_log`/features store the text AS SENT
+  (with the h/t tail). Web content searches past-month pages only and
+  remembers rejected articles (`web_skip:<id>` state keys).
 
 ## Conventions
 

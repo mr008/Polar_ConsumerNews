@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import time
 from urllib.parse import urlparse
 
 from ..models import WEB_ID_PREFIX, Post, utcnow
@@ -43,19 +44,25 @@ def web_id(url: str) -> str:
     return WEB_ID_PREFIX + hashlib.sha1(url.encode("utf-8")).hexdigest()[:16]
 
 
-def find_article_candidates(queries, key, *, provider="brave", per_query=15):
+def find_article_candidates(queries, key, *, provider="brave", per_query=15,
+                            freshness="", pause=0.0):
     """Run the content queries and return deduped [(url, title, blurb)] for results
-    that look like tactical blog articles (junk domains dropped)."""
+    that look like tactical blog articles (junk domains dropped). `freshness`
+    limits results by age (see _brave_search); `pause` sleeps between queries to
+    stay under the provider's rate limit."""
     if not key or not queries:
         return []
     fetch = wd._PROVIDERS.get(provider)
     if fetch is None:
         print(f"  [web-content] unknown provider '{provider}' — skipped")
         return []
+    extra = {"freshness": freshness} if freshness else {}
     out: dict[str, dict] = {}
-    for q in queries:
+    for i, q in enumerate(queries):
+        if i and pause:
+            time.sleep(pause)
         try:
-            results = fetch(q, key, per_query, 20.0)
+            results = fetch(q, key, per_query, 20.0, **extra)
         except Exception as e:
             print(f"  [web-content] query failed ({type(e).__name__}): {q[:60]}")
             continue
@@ -100,13 +107,16 @@ _SUMMARY_SYSTEM = (
 def summarize_article(title: str, blurb: str, url: str, cfg,
                       min_chars: int = 400) -> str | None:
     """Fetch (or fall back to the blurb) and summarize into a teaching brief.
-    Returns None when the model says SKIP or no LLM key is available."""
+    Returns "" when the article has nothing to teach (too thin, or the model says
+    SKIP) — the caller remembers it and never pays to summarize it again — and
+    None when it couldn't be judged right now (no LLM key, LLM error, empty
+    reply), so the next run retries it."""
     from ..commentary.generate import PROVIDERS, openai_chat  # lazy: avoid cycle
 
     body = _fetch_text(url)
     source = body if len(body) >= min_chars else blurb
     if len(source) < 80:                       # nothing worth summarizing
-        return None
+        return ""
     provider = _pick_provider(cfg)
     if provider is None:
         return None
@@ -127,8 +137,10 @@ def summarize_article(title: str, blurb: str, url: str, cfg,
     except Exception as e:
         print(f"  [web-content] summarize failed ({type(e).__name__}): {url[:60]}")
         return None
-    if not text or text.upper().startswith("SKIP"):
+    if not text:
         return None
+    if text.upper().startswith("SKIP"):
+        return ""
     return text
 
 

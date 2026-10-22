@@ -147,8 +147,10 @@ thresholds:
   # 0.45 works because the judge now emits a GRADED topic_fit (0.0-1.0) instead
   # of a hard true/false — adjacent-but-useful content (general marketing,
   # creator economy, AI tooling) lands ~0.5 and clears the bar.
-  topic_fit_min: 0.45
-  quote_worthy_min: 0.35       # looser floor — keeps resonant posts (e.g. adriamatz)
+  # 2026-10-21: 0.45/0.35 -> 0.40/0.30 = the floors the volume test ran on since
+  # 10-08 (its threshold_delta, now permanent; the test itself is off).
+  topic_fit_min: 0.40
+  quote_worthy_min: 0.30       # looser floor — keeps resonant posts (e.g. adriamatz)
   near_dup_similarity: 0.82
 recency_tau_hours: 8
 
@@ -190,6 +192,7 @@ topics:
 posting:
   per_day: 3                   # hard daily cap (publish_due re-checks posted_log)
   per_run: 1                   # each scheduled window posts at most one draft
+  max_vet_attempts: 3          # generate + up to 2 editor rewrites per draft (volume test's lever, kept)
   card_handle: "polarbeargrowth"  # OUR handle for the image-card footer (no @). Empty = no footer.
   # Draft queue = small standby buffer, NOT a backlog: collect tops it up to
   # per_day+1 pending drafts (one spare in case a publish fails), and anything
@@ -254,8 +257,12 @@ experiments:
     enabled: true
     arms: [tail, question]       # question = one closing question to @author, no h/t
     started: 2026-10-08          # set to the day you enable this test
+  # 2026-10-21: OFF. Not a valid test — it started the same day as the plain-voice
+  # gate and posts/day FELL (0.93 -> 0.55), so it could only ever grade the gate.
+  # Its looser floors + extra rewrite are now the normal settings (thresholds,
+  # posting.max_vet_attempts); per_run stays 1 (constitution: immutable).
   volume:
-    enabled: true
+    enabled: false
     period: true
     started: 2026-10-08          # set to the day you enable this test
     threshold_delta: 0.05        # subtracted from thresholds.topic_fit_min / quote_worthy_min
@@ -277,6 +284,16 @@ webcontent:
     - "consumer app growth distribution playbook 2026"
     - "mobile app paywall pricing test results subscription churn"
     - "UGC creator program app installs case study"
+    - "app store fees web checkout subscription app results"
+    - "mobile app onboarding conversion experiment results"
+    - "TikTok organic growth consumer app case study"
+    - "app subscription price increase test what happened"
+  # 2026-10-21: the same queries with no age limit returned the same top pages
+  # every run, so after the first weeks almost nothing was new (0-1 added/run).
+  # pm = only pages from the past month (Brave codes: pd/pw/pm/py; "" = any age).
+  freshness: pm
+  query_pause_seconds: 1.0       # Brave free tier allows 1 query/sec
+  # 8 queries x 2 runs/day ~= 480 of Brave's 2,000 free queries/mo (list-sync uses ~16)
   # Web briefs carry no h/t, so they reach no one's notifications: they averaged
   # 5.6 views vs 18 for X-sourced posts (2026-09 review). Multiplies their
   # publish rank so they fill a window only when no comparable X post waits.

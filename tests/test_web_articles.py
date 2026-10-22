@@ -121,3 +121,56 @@ def test_collect_web_disabled_is_noop(tmp_path, monkeypatch):
 def test_collect_web_no_key_skips(tmp_path, monkeypatch):
     monkeypatch.delenv("SEARCH_API_KEY", raising=False)
     assert _orch(_repo(tmp_path)).collect_web() == 0
+
+
+# ------------------------- fresh results + remembered rejections -------------------------
+
+def test_find_article_candidates_passes_freshness_only_when_set(monkeypatch):
+    seen = []
+
+    def fake(q, key, count, timeout, **kw):
+        seen.append(kw)
+        return []
+    monkeypatch.setitem(wa.wd._PROVIDERS, "brave", fake)
+    wa.find_article_candidates(["q"], "key", freshness="pm")
+    wa.find_article_candidates(["q"], "key")
+    assert seen == [{"freshness": "pm"}, {}]
+
+
+def test_brave_search_sends_freshness(monkeypatch):
+    import sys
+    import types
+    sent = {}
+
+    class _Resp:
+        def raise_for_status(self): pass
+        def json(self): return {"web": {"results": [{"url": "u"}]}}
+
+    fake = types.SimpleNamespace(get=lambda url, params=None, **k: sent.update(params) or _Resp())
+    monkeypatch.setitem(sys.modules, "httpx", fake)
+    assert wa.wd._brave_search("q", "key", 15, 5.0, freshness="pm") == [{"url": "u"}]
+    assert sent == {"q": "q", "count": 15, "freshness": "pm"}
+    sent.clear()
+    wa.wd._brave_search("q", "key", 15, 5.0)
+    assert "freshness" not in sent
+
+
+def test_collect_web_remembers_rejections_but_retries_errors(tmp_path, monkeypatch):
+    monkeypatch.setenv("SEARCH_API_KEY", "key")
+    repo = _repo(tmp_path)
+    monkeypatch.setattr(wa, "find_article_candidates", lambda *a, **k: [
+        ("https://b.dev/skip", "t", "b"), ("https://b.dev/err", "t", "b")])
+    briefs = {"https://b.dev/skip": "", "https://b.dev/err": None}   # "" = nothing to teach
+    calls = []
+    monkeypatch.setattr(wa, "summarize_article",
+                        lambda title, blurb, url, cfg, min_chars=400:
+                        calls.append(url) or briefs[url])
+    assert _orch(repo).collect_web() == 0
+    assert _orch(repo).collect_web() == 0
+    # the rejected article is never paid for twice; the errored one is retried
+    assert calls == ["https://b.dev/skip", "https://b.dev/err", "https://b.dev/err"]
+
+
+def test_summarize_article_too_thin_is_a_rejection_not_an_error(monkeypatch):
+    monkeypatch.setattr(wa, "_fetch_text", lambda url, timeout=15.0: "")
+    assert wa.summarize_article("t", "short blurb", "https://b.dev/x", NS({})) == ""

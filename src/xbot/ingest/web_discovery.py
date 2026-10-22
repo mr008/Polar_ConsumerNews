@@ -89,14 +89,20 @@ def search_handles(queries: list[str], api_key: str, *, provider: str = "brave",
     return list(seen)
 
 
-def _brave_search(query: str, api_key: str, count: int, timeout: float) -> list[dict]:
+def _brave_search(query: str, api_key: str, count: int, timeout: float,
+                  freshness: str = "") -> list[dict]:
     """Brave Web Search API -> [{url, title, description}]. count is capped at 20
-    (Brave's per-call max). Free tier: 2,000 queries/mo, 1 query/sec."""
+    (Brave's per-call max). Free tier: 2,000 queries/mo, 1 query/sec.
+    `freshness` (pd/pw/pm/py) limits results to pages from the past day/week/
+    month/year; empty = any age."""
     import httpx  # lazy — keeps the dry-run path dependency-light
 
+    params = {"q": query, "count": max(1, min(20, count))}
+    if freshness:
+        params["freshness"] = freshness
     resp = httpx.get(
         "https://api.search.brave.com/res/v1/web/search",
-        params={"q": query, "count": max(1, min(20, count))},
+        params=params,
         headers={"Accept": "application/json", "X-Subscription-Token": api_key},
         timeout=timeout,
     )
@@ -104,11 +110,13 @@ def _brave_search(query: str, api_key: str, count: int, timeout: float) -> list[
     return resp.json().get("web", {}).get("results", []) or []
 
 
-def _you_search(query: str, api_key: str, count: int, timeout: float) -> list[dict]:
+def _you_search(query: str, api_key: str, count: int, timeout: float,
+                freshness: str = "") -> list[dict]:
     """You.com Search API -> [{url, title, description, extra_snippets}]. Results
     live under results.web; You calls the excerpt list `snippets`, which we
     normalize to `extra_snippets` so downstream code stays provider-agnostic.
-    Paid API (free starter credits) — no Brave-style free tier."""
+    Paid API (free starter credits) — no Brave-style free tier. `freshness` is
+    accepted for signature parity but not applied (Brave codes aren't mapped)."""
     import httpx  # lazy — keeps the dry-run path dependency-light
 
     resp = httpx.get(

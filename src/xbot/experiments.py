@@ -74,8 +74,9 @@ def per_run(cfg) -> int:
 
 
 def max_vet_attempts(cfg) -> int:
-    """Generate + revisions the vet loop may spend on one draft (2 today)."""
-    return 3 if volume_on(cfg) else 2
+    """Generate + revisions the vet loop may spend on one draft:
+    posting.max_vet_attempts (default 2), or 3 while the volume test is on."""
+    return 3 if volume_on(cfg) else int(cfg.get("posting.max_vet_attempts", 2))
 
 
 # ---- grading (spec §5) ----

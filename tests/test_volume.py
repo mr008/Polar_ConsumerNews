@@ -130,3 +130,10 @@ def test_revision_feedback_qa_tail_arm_keeps_never_address():
         fb = o._revision_feedback(post, "qa:too vague", arms)
         assert "never address the author" in fb.lower()
         assert "closing question" not in fb
+
+
+def test_max_vet_attempts_reads_posting_config_when_volume_off():
+    from xbot.experiments import max_vet_attempts
+    assert max_vet_attempts(NS({})) == 2
+    assert max_vet_attempts(NS({"posting": {"max_vet_attempts": 3}})) == 3
+    assert max_vet_attempts(NS({"experiments": {"volume": {"enabled": True}}})) == 3
