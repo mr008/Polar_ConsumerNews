@@ -2,7 +2,7 @@
 # Move the archive between this machine/CI runner and Cloudflare.
 #   pull    download state/archive.db from R2 (ok if it does not exist yet)
 #   push    upload every media file on disk + archive.db to R2
-#   deploy  publish site/ (index.html + data.json + media function) to Pages
+#   deploy  publish site/public (index.html + data.json) + the media function to Pages
 # Needs wrangler auth: `npx wrangler login` locally, or CLOUDFLARE_API_TOKEN +
 # CLOUDFLARE_ACCOUNT_ID in CI. R2 bucket: ARCHIVE_BUCKET (polar-archive); Pages
 # project: ARCHIVE_PROJECT (polarbeargrowth).
@@ -48,7 +48,7 @@ case "${1:-}" in
     echo "pushed $n new media file(s) + archive.db; $failed failed"
     [ "$failed" -eq 0 ] ;;
   deploy)
-    cp "$OUT/data.json" site/data.json
-    (cd site && $WR pages deploy . --project-name "$PROJECT" --branch main --commit-dirty=true) ;;
+    cp "$OUT/data.json" site/public/data.json
+    (cd site && $WR pages deploy public --project-name "$PROJECT" --branch main --commit-dirty=true) ;;
   *) echo "usage: $0 pull|push|deploy" >&2; exit 2 ;;
 esac

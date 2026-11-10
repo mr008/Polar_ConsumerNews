@@ -736,7 +736,7 @@ def main(argv=None):
     p_ar.add_argument("--no-x", action="store_true",
                       help="skip the paid X reads; only web articles are fetched")
     p_ar.add_argument("--site", action="store_true",
-                      help="also write data.json for the static site (site/index.html)")
+                      help="also write data.json for the static site (site/public/index.html)")
     p_ar.set_defaults(func=cmd_archive)
 
     args = parser.parse_args(argv)

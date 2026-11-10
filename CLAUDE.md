@@ -49,7 +49,13 @@ xbot initdb | collect | score [--top N] | draft | review | publish | run
 `archive` builds a LOCAL copy of every published post next to its original (full
 text, pictures and whole videos) in `data/archive/` (`archive.db` + `media/`). Read-only
 against production; re-runs fetch only what is new (~$0.005 X read per new tweet,
-plus one per quoted post; web articles are free).
+plus one per quoted post; web articles are free). `--site` also writes `data.json`.
+The archive is PUBLIC at https://polarbeargrowth.pages.dev (Cloudflare Pages project
+`polarbeargrowth`; pictures/videos + `state/archive.db` in R2 bucket `polar-archive`).
+`site/public/` is the served page, `site/functions/media/` serves R2 files, and
+`scripts/archive_sync.sh pull|push|deploy` moves data. The `archive` workflow runs
+all of it daily (05:40 UTC; secrets `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`).
+Article text cleanup lives in `archive.extract_article` (tests: `tests/test_archive.py`).
 `list-sync` builds/refreshes a PRIVATE curated read-List from author yield (keep =
 ever-posted or ever-scored >= --min-qw) so collection reads only worthwhile authors
 without changing who you follow; `scoping.source_timeline: list` reads only it, `both`
@@ -193,7 +199,7 @@ dry_run` in a local, uncommitted config change.
 - ✅ LIVE + AUTONOMOUS since 2026-06-06: api source + api publisher + Turso +
   GitHub Actions. Cadence (UTC crons in `.github/workflows/`): collect every 6h
   (was 3h; cut because metrics-refresh reads are not since_id-deduped), publish
-  3x/day PT windows with jitter, web-content 2x/day, mechanic daily, list-sync +
+  3x/day PT windows with jitter, web-content 2x/day, mechanic + archive daily, list-sync +
   strategist weekly (Mon). Down 09-06→09-21 (read-only token + unpaid
   balance, lesson 11); all green again as of 2026-09-21.
 - ✅ Growth overhaul (2026-06-11): mention format (no URL in main post), adaptive

@@ -1,6 +1,6 @@
 # Cloudflare Pages project for the public archive site (see scripts/archive_sync.sh).
 name = "polarbeargrowth"
-pages_build_output_dir = "."
+pages_build_output_dir = "public"   # only this folder is served; this file stays private
 compatibility_date = "2026-06-01"
 
 [[r2_buckets]]

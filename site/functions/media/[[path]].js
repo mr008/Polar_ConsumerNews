@@ -4,7 +4,8 @@ export async function onRequestGet(ctx) {
   try {
     return await serve(ctx);
   } catch (err) {
-    return new Response("media error: " + (err && err.message), { status: 500 });
+    console.error("media error:", err);   // details go to the Pages log, not the visitor
+    return new Response("Not found", { status: 404 });
   }
 }
 

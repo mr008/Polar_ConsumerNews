@@ -34,7 +34,7 @@ Thumbs.db
 /self_quote.py
 /setup_turso.py
 /probe.db
-site/data.json
+site/public/data.json
 
 # wrangler files
 .wrangler
