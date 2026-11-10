@@ -44,7 +44,12 @@ xbot initdb | collect | score [--top N] | draft | review | publish | run
      | reply-scan | reply-queue | reply-nudge | snapshot | harvest
      | agent-smoke | detect [--json] | mechanic | curate | briefing
      | strategist | list-sync [--dry-run] | report | experiments [--json]
+     | archive [--limit N] [--no-x] [--out DIR]
 ```
+`archive` builds a LOCAL copy of every published post next to its original (full
+text, pictures and whole videos) in `data/archive/` (`archive.db` + `media/`). Read-only
+against production; re-runs fetch only what is new (~$0.005 X read per new tweet,
+plus one per quoted post; web articles are free).
 `list-sync` builds/refreshes a PRIVATE curated read-List from author yield (keep =
 ever-posted or ever-scored >= --min-qw) so collection reads only worthwhile authors
 without changing who you follow; `scoping.source_timeline: list` reads only it, `both`

@@ -1,0 +1,8 @@
+# Cloudflare Pages project for the public archive site (see scripts/archive_sync.sh).
+name = "polarbeargrowth"
+pages_build_output_dir = "."
+compatibility_date = "2026-06-01"
+
+[[r2_buckets]]
+binding = "MEDIA"
+bucket_name = "polar-archive"

@@ -505,6 +505,33 @@ def cmd_harvest(args):
         print(f"  {m:>4} → https://x.com/i/status/{tid}")
 
 
+def cmd_archive(args):
+    """Local copy of every published post + its original (text and pictures).
+    Read-only against production; no schema init, no LLM, no posting."""
+    from .archive import build_archive
+    from .orchestrator import make_source
+
+    load_dotenv()
+    cfg = load_config(args.config)
+    repo = get_repository(cfg)
+    source = None
+    if not args.no_x and cfg.get("mode.source", "sample") == "api":
+        source = make_source(cfg)
+    res = build_archive(repo, source, args.out, limit=args.limit)
+    st = res["by_status"]
+    print(f"archive: {res['total']} post(s) — {st.get('ok', 0)} complete, "
+          f"{st.get('pending', 0)} waiting, {st.get('gone', 0)} gone, "
+          f"{st.get('error', 0)} failed")
+    print(f"  this run: fetched {res['fetched']} original(s), saved {res['media']} "
+          f"picture/video file(s), {res['x_reads']} X read(s)")
+    print(f"  database: {res['db']}")
+    if args.site:
+        from .archive import export_site
+        site = export_site(args.out)
+        print(f"  site data: {site['path']} ({site['items']} posts)")
+    return 1 if res["x_error"] else 0
+
+
 def cmd_agent_smoke(args):
     """Prove subscription auth (CLAUDE_CODE_OAUTH_TOKEN) works headless in CI
     before any real brain depends on it. Read-only, few turns, logged to the
@@ -701,6 +728,16 @@ def main(argv=None):
                            "off by default so the weekly cron only does promote/demote")
     p_ls.set_defaults(func=cmd_list_sync)
     sub.add_parser("report").set_defaults(func=cmd_report)
+    p_ar = sub.add_parser("archive")
+    p_ar.add_argument("--out", default="data/archive",
+                      help="folder for archive.db + media/ (default data/archive)")
+    p_ar.add_argument("--limit", type=int, default=None,
+                      help="fetch at most N missing originals this run (newest first)")
+    p_ar.add_argument("--no-x", action="store_true",
+                      help="skip the paid X reads; only web articles are fetched")
+    p_ar.add_argument("--site", action="store_true",
+                      help="also write data.json for the static site (site/index.html)")
+    p_ar.set_defaults(func=cmd_archive)
 
     args = parser.parse_args(argv)
     try:

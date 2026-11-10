@@ -704,6 +704,28 @@ class SqliteRepository:
         return [{"our_tweet_id": r["our_tweet_id"], "posted_at": r["posted_at"]}
                 for r in rows]
 
+    def posted_all(self) -> list[dict]:
+        """Every published post, oldest first, with its source link and the best
+        engagement numbers any milestone captured — the `xbot archive` feed."""
+        rows = self.conn.execute(
+            """SELECT l.id, l.source_tweet_id, l.our_tweet_id, l.author_handle,
+                      l.source_text, l.commentary, l.posted_at, l.posted_at_pt,
+                      p.url AS source_url, o.views, o.likes, o.reposts, o.replies,
+                      o.quotes
+               FROM posted_log l
+               LEFT JOIN posts p ON p.tweet_id = l.source_tweet_id
+               LEFT JOIN (SELECT our_tweet_id, MAX(views) AS views, MAX(likes) AS likes,
+                                 MAX(reposts) AS reposts, MAX(replies) AS replies,
+                                 MAX(quotes) AS quotes
+                          FROM post_outcomes GROUP BY our_tweet_id) o
+                      ON o.our_tweet_id = l.our_tweet_id
+               ORDER BY l.id"""
+        ).fetchall()
+        keys = ("id", "source_tweet_id", "our_tweet_id", "author_handle", "source_text",
+                "commentary", "posted_at", "posted_at_pt", "source_url", "views",
+                "likes", "reposts", "replies", "quotes")
+        return [{k: r[k] for k in keys} for r in rows]
+
     def outcome_milestones(self, our_tweet_id: str) -> set[str]:
         rows = self.conn.execute(
             "SELECT milestone FROM post_outcomes WHERE our_tweet_id=?", (our_tweet_id,)

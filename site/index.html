@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Polarbear · App Growth Breakdowns</title>
+<meta name="description" content="Every @polarbeargrowth post, next to the original it came from.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;0,800;1,500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #ffffff; --ink: #1d2327; --muted: #5d676e; --line: #d9dee1; --strip: #f1f3f3;
+    --green: #0a6b3d; --green-deep: #075330; --on-green: #ffffff; --on-green-soft: #cfe6d9;
+    --black: #121514; --paper: #ffffff; --shade: rgba(12,16,14,.66);
+    --serif: "Playfair Display", "Iowan Old Style", Georgia, "Times New Roman", serif;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1211; --ink: #eef1ef; --muted: #9aa5a0; --line: #2a302d; --strip: #181c1a;
+      --green: #0c7a46; --green-deep: #0a6239; --black: #000000; --paper: #171b19;
+      --shade: rgba(0,0,0,.74);
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.5 var(--sans); }
+  .wrap { max-width: 892px; margin: 0 auto; padding: 0 16px 72px; }
+
+  /* ---- header: mark, name, one wide button, a quiet strip ---- */
+  header { text-align: center; padding: 30px 0 0; }
+  .logo { width: 64px; height: 64px; border-radius: 50%; object-fit: cover; display: block; margin: 0 auto 12px; }
+  h1 { font: 700 18px/1.2 var(--sans); margin: 0 0 14px; letter-spacing: -.01em; }
+  .cta {
+    display: block; width: 100%; padding: 13px 16px; border: 1px solid var(--ink); border-radius: 6px;
+    color: var(--ink); text-decoration: none; font: 500 16px/1.3 var(--sans); background: transparent;
+  }
+  .cta:hover { background: var(--strip); }
+  .strip {
+    margin-top: 24px; background: var(--strip); color: var(--muted); font-size: 13px;
+    padding: 5px 12px; display: flex; justify-content: center; gap: 6px 18px; flex-wrap: wrap;
+  }
+  .strip button {
+    font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer;
+  }
+  .strip button[aria-pressed="true"] { color: var(--ink); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+  .strip .sep { opacity: .5; }
+
+  /* ---- the grid of cards ---- */
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-top: 4px; }
+  @media (max-width: 560px) { .grid { grid-template-columns: repeat(2, 1fr); } }
+  .card {
+    container-type: inline-size; aspect-ratio: 3 / 4; display: flex; flex-direction: column;
+    padding: 0; border: 0; margin: 0; cursor: pointer; overflow: hidden; text-align: center;
+    background: var(--green); color: var(--on-green); font: inherit; position: relative;
+  }
+  .card:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; z-index: 1; }
+  .pic { flex: 0 0 60%; overflow: hidden; background: var(--strip); position: relative; }
+  .pic img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform .3s ease; }
+  .card:hover .pic img { transform: scale(1.035); }
+  .play {
+    position: absolute; left: 3.5cqw; bottom: 3.5cqw; width: 11cqw; height: 11cqw; min-width: 24px; min-height: 24px;
+    border-radius: 50%; background: rgba(0,0,0,.66); color: #fff; display: grid; place-items: center;
+  }
+  .play svg { width: 42%; height: 42%; margin-left: 8%; }
+  .band {
+    flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; align-items: center;
+    justify-content: center; gap: 2.2cqw; padding: 3.5cqw 6cqw 2.5cqw; background: var(--green); color: var(--on-green);
+  }
+  .hl {
+    font: 800 6.3cqw/1.16 var(--serif); margin: 0; text-wrap: balance; letter-spacing: -.005em;
+    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .sub {
+    font: italic 500 4cqw/1.2 var(--serif); margin: 0; color: var(--on-green-soft);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
+  }
+  .mark {
+    margin-top: auto; width: 100%; display: flex; align-items: center; gap: 2.5cqw;
+    font: 800 3.1cqw/1 var(--sans); letter-spacing: .14em; text-transform: uppercase; white-space: nowrap;
+  }
+  .mark::before, .mark::after { content: ""; flex: 1; height: 1px; background: currentColor; opacity: .45; }
+
+  /* articles: white band, like a front page */
+  .card.web .band { background: var(--paper); color: var(--ink); }
+  .card.web .sub { color: var(--muted); }
+  .card.web .mark { color: var(--green); }
+  /* no picture: the headline is the whole card */
+  .card.words { background: var(--black); }
+  .card.words .band { background: var(--black); color: #fff; padding: 9cqw 8cqw 3.5cqw; gap: 4cqw; }
+  .card.words .kicker {
+    font: 800 3.2cqw/1 var(--sans); letter-spacing: .16em; text-transform: uppercase; color: #7fd6a6;
+    border: 1px solid currentColor; padding: 1.6cqw 2.6cqw; border-radius: 99px;
+  }
+  .card.words .hl { font-size: 8.6cqw; -webkit-line-clamp: 6; margin-top: auto; }
+  .card.words .sub { color: #b9c4be; font-size: 4.4cqw; }
+  .empty { grid-column: 1 / -1; text-align: center; color: var(--muted); padding: 56px 0; }
+
+  /* ---- the post view: a full-page article, blog-platform style ---- */
+  dialog {
+    width: 100vw; max-width: 100vw; height: 100dvh; max-height: 100dvh; margin: 0; padding: 0; border: 0;
+    background: var(--bg); color: var(--ink); overflow: auto;
+    --read: Charter, "Bitstream Charter", "Iowan Old Style", "Sitka Text", Georgia, serif;
+  }
+  .topbar {
+    position: sticky; top: 0; z-index: 2; display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 20px; background: var(--bg); border-bottom: 1px solid var(--line);
+  }
+  .topbar .pub { display: flex; align-items: center; gap: 9px; font: 600 17px/1 var(--sans); letter-spacing: -.01em; }
+  .topbar img { width: 26px; height: 26px; border-radius: 50%; object-fit: cover; }
+  .close {
+    font: 500 14px/1 var(--sans); cursor: pointer; border: 0; background: var(--ink); color: var(--bg);
+    border-radius: 99px; padding: 9px 16px;
+  }
+  article { max-width: 728px; margin: 0 auto; padding: 36px 24px 80px; }
+  .pills { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; }
+  .pills span { font: 400 13px/1 var(--sans); padding: 7px 12px; border: 1px solid var(--line); border-radius: 99px; color: var(--ink); }
+  .a-hl { font: 800 clamp(30px, 5.4vw, 42px)/1.16 var(--sans); letter-spacing: -.028em; margin: 0 0 22px; text-wrap: balance; }
+  .author { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 0 0 26px; font: 400 14px/1.3 var(--sans); }
+  .face {
+    width: 34px; height: 34px; border-radius: 50%; background: var(--green); color: #fff; flex: none;
+    display: grid; place-items: center; font: 700 15px/1 var(--sans); text-transform: uppercase;
+  }
+  .author b { font-weight: 500; }
+  .author .pill { text-decoration: none; color: var(--ink); border: 1px solid var(--ink); border-radius: 99px; padding: 6px 13px; font-size: 13px; }
+  .author .pill:hover { background: var(--strip); }
+  .author .meta { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .actions {
+    display: flex; justify-content: space-between; align-items: center; gap: 8px 20px; flex-wrap: wrap;
+    border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 13px 4px; margin: 0 0 44px;
+    font: 400 14px/1.3 var(--sans); color: var(--muted); font-variant-numeric: tabular-nums;
+  }
+  .actions .nums, .actions .go { display: flex; gap: 20px; flex-wrap: wrap; }
+  .actions a { color: var(--muted); text-decoration: none; }
+  .actions a:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
+  figure { margin: 0 0 40px; }
+  figure img, figure video { width: 100%; height: auto; max-height: 86vh; object-fit: contain; background: var(--strip); display: block; }
+  figure + figure { margin-top: -24px; }
+  figcaption { font: 400 14px/1.4 var(--sans); color: var(--muted); padding-top: 10px; text-align: center; }
+  .sub-h { font: 700 clamp(20px, 3vw, 24px)/1.22 var(--sans); letter-spacing: -.016em; margin: 8px 0 8px; text-wrap: balance; }
+  .by-orig { font: 400 clamp(18px, 2.6vw, 20px)/1.58 var(--read); margin: 0 0 28px; }
+  .by-orig a { color: inherit; text-underline-offset: 3px; }
+  .body p { font: 400 clamp(18px, 2.6vw, 20px)/1.6 var(--read); letter-spacing: -.003em; margin: 0 0 1.45em; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .body.long { max-height: 34em; overflow: hidden; -webkit-mask-image: linear-gradient(#000 72%, transparent); mask-image: linear-gradient(#000 72%, transparent); }
+  .more { font: 500 15px/1 var(--sans); background: none; border: 1px solid var(--ink); border-radius: 99px; padding: 10px 18px; color: var(--ink); cursor: pointer; margin: 0 0 40px; }
+  .more:hover { background: var(--strip); }
+  .quote { border-left: 3px solid var(--ink); padding-left: 22px; margin: 8px 0 36px; }
+  .quote .who { font: 600 14px/1.3 var(--sans); color: var(--muted); margin: 0 0 10px; }
+  .quote .body p { font-style: italic; }
+  .quote.article .body p { font-style: normal; }
+  .body p a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+  .note { color: var(--muted); font: italic 400 18px/1.5 var(--read); margin: 0 0 24px; }
+  .endbar { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 24px; display: flex; gap: 10px; flex-wrap: wrap; }
+  .endbar a { text-decoration: none; font: 500 14px/1 var(--sans); padding: 11px 18px; border-radius: 99px; border: 1px solid var(--ink); color: var(--ink); }
+  .endbar a.primary { background: var(--ink); color: var(--bg); }
+  @media (max-width: 560px) { article { padding: 26px 20px 64px; } .actions { margin-bottom: 32px; } }
+  footer { text-align: center; color: var(--muted); font-size: 13px; padding-top: 30px; }
+  @media (prefers-reduced-motion: reduce) { .pic img { transition: none; } }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="tri" viewBox="0 0 10 10"><path fill="currentColor" d="M1 0l9 5-9 5z"/></symbol>
+</svg>
+<div class="wrap">
+  <header>
+    <img class="logo" src="avatar.jpg" alt="" width="64" height="64">
+    <h1>polarbeargrowth</h1>
+    <a class="cta" href="https://x.com/polarbeargrowth" target="_blank" rel="noopener noreferrer">Follow @polarbeargrowth on X</a>
+    <div class="strip" role="group" aria-label="Filter posts">
+      <span id="count">Tap a card to see the original</span><span class="sep" aria-hidden="true">|</span>
+      <button data-f="all" aria-pressed="true">All</button>
+      <button data-f="tweet" aria-pressed="false">From X</button>
+      <button data-f="web" aria-pressed="false">From articles</button>
+      <button data-f="video" aria-pressed="false">With video</button>
+    </div>
+  </header>
+  <main class="grid" id="grid"></main>
+  <footer>Originals belong to their authors. Every card links back to its source.</footer>
+</div>
+<dialog id="dlg" aria-label="Post and its original"><div id="sheet"></div></dialog>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const el = (tag, cls, text) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text != null) n.textContent = text;
+  return n;
+};
+const icon = (id) => {
+  const s = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  const u = document.createElementNS("http://www.w3.org/2000/svg", "use");
+  u.setAttribute("href", "#" + id); s.setAttribute("aria-hidden", "true"); s.append(u);
+  return s;
+};
+const lines = (t) => (t || "").split("\n").map((l) => l.trim()).filter(Boolean);
+const headline = (it) => (lines(it.our_text)[0] || "").replace(/[.:]$/, "");
+const rest = (it) => (it.our_text || "").split("\n").slice(1).join("\n").trim();
+const day = (iso) => iso ? new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "";
+const who = (it) => it.kind === "web" ? it.source_author : "@" + it.source_author;
+const safeUrl = (u) => /^https?:\/\//i.test(u || "") ? u : "";
+let items = [], filter = "all";
+
+function mark() {
+  const m = el("span", "mark");
+  m.textContent = "Polarbear";
+  return m;
+}
+function asWords(card, it) {
+  card.className = "card words";
+  const band = el("span", "band");
+  band.append(el("span", "kicker", it.kind === "web" ? "From an article" : "From X"),
+              el("span", "hl", headline(it)), el("span", "sub", who(it)), mark());
+  card.replaceChildren(band);
+}
+function card(it) {
+  const b = el("button", "card " + it.kind);
+  b.type = "button";
+  b.setAttribute("aria-label", headline(it) + ". From " + who(it));
+  b.onclick = () => open(it);
+  if (!it.tile) { asWords(b, it); return b; }
+  const pic = el("span", "pic");
+  const img = el("img");
+  img.src = it.tile; img.alt = ""; img.loading = "lazy"; img.decoding = "async";
+  img.onerror = () => asWords(b, it);
+  pic.append(img);
+  if (it.has_video) { const p = el("span", "play"); p.append(icon("tri")); pic.append(p); }
+  const band = el("span", "band");
+  band.append(el("span", "hl", headline(it)),
+              el("span", "sub", it.kind === "web" ? who(it) : "From " + who(it)), mark());
+  b.append(pic, band);
+  return b;
+}
+function draw() {
+  const shown = items.filter((it) =>
+    filter === "all" || (filter === "video" ? it.has_video : it.kind === filter));
+  $("#grid").replaceChildren(...(shown.length ? shown.map(card) : [el("p", "empty", "Nothing here yet.")]));
+  $("#count").textContent = shown.length + (shown.length === 1 ? " post" : " posts") + " · tap a card to see the original";
+}
+function textBlock(text) {
+  const frag = document.createDocumentFragment();
+  const box = el("div", "body");
+  (text || "").split(/\n\s*\n/).map((t) => t.trim()).filter(Boolean)
+    .forEach((t) => {
+      const p = el("p");
+      // web addresses become links; everything else stays plain text
+      t.split(/(https?:\/\/[^\s<>"']+)/).forEach((part, i) => {
+        const clean = part.replace(/[.,;:!?)\]]+$/, "");
+        const a = i % 2 ? link(clean, clean.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "")) : null;
+        if (a) p.append(a, part.slice(clean.length)); else p.append(part);
+      });
+      box.append(p);
+    });
+  frag.append(box);
+  if ((text || "").length > 1800) {
+    box.classList.add("long");
+    const m = el("button", "more", "Read the whole thing");
+    m.type = "button";
+    m.onclick = () => { box.classList.remove("long"); m.remove(); };
+    frag.append(m);
+  }
+  return frag;
+}
+function figures(media) {
+  const frag = document.createDocumentFragment();
+  const fig = (node, caption) => {
+    const f = el("figure");
+    f.append(node);
+    if (caption) f.append(el("figcaption", null, caption));
+    frag.append(f);
+  };
+  const videos = media.filter((m) => m.kind === "video_file");
+  const posters = media.filter((m) => m.kind === "video" || m.kind === "animated_gif");
+  videos.forEach((v, i) => {
+    const vid = el("video");
+    vid.controls = true; vid.preload = "none"; vid.playsInline = true; vid.src = v.path;
+    if (posters[i]) vid.poster = posters[i].path;
+    fig(vid, v.alt);
+  });
+  media.filter((m) => m.kind === "photo" || m.kind === "image" ||
+      (!videos.length && (m.kind === "video" || m.kind === "animated_gif")))
+    .forEach((m) => {
+      const img = el("img");
+      img.src = m.path; img.alt = m.alt || ""; img.loading = "lazy";
+      const f = el("figure");
+      img.onerror = () => f.remove();
+      f.append(img);
+      if (m.alt) f.append(el("figcaption", null, m.alt));
+      frag.append(f);
+    });
+  return frag;
+}
+function link(href, label, cls) {
+  if (!safeUrl(href)) return null;
+  const l = el("a", cls, label);
+  l.href = href; l.target = "_blank"; l.rel = "noopener noreferrer";
+  return l;
+}
+function open(it) {
+  const top = el("div", "topbar");
+  const pub = el("span", "pub");
+  const face = el("img");
+  face.src = "avatar.jpg"; face.alt = "";
+  pub.append(face, document.createTextNode("Polarbear · App Growth Breakdowns"));
+  const close = el("button", "close", "Close");
+  close.type = "button"; close.onclick = () => $("#dlg").close();
+  top.append(pub, close);
+
+  const a = el("article");
+  const mine = it.media.filter((m) => m.role !== "quoted");
+  const quoted = it.media.filter((m) => m.role === "quoted");
+  const hasVideo = it.media.some((m) => m.kind === "video_file");
+
+  const pills = el("div", "pills");
+  [it.kind === "web" ? "From an article" : "From X", hasVideo ? "Video" : "",
+   it.quoted_text ? "Quote post" : "", it.status === "gone" ? "Original deleted" : ""]
+    .filter(Boolean).forEach((t) => pills.append(el("span", null, t)));
+  // our post is the headline only; the rest of it is one click away on X
+  a.append(pills, el("h2", "a-hl", lines(it.our_text)[0] || ""));
+
+  const author = el("div", "author");
+  author.append(el("span", "face", (it.source_author || "?").replace(/^www\./, "")[0]),
+                el("b", null, who(it)));
+  const orig = link(it.source_url, "Original", "pill");
+  if (orig) author.append(orig);
+  author.append(el("span", "meta", "Posted " + day(it.posted_at)));
+  a.append(author);
+
+  const actions = el("div", "actions");
+  const nums = el("span", "nums");
+  if (it.views != null) nums.append(el("span", null, it.views + " views"), el("span", null, (it.likes ?? 0) + " likes"));
+  else nums.append(el("span", null, "No view count yet"));
+  const go = el("span", "go");
+  [link(it.source_url, "Open the original ↗"), link(it.our_url, "Read our post on X ↗")]
+    .forEach((l) => l && go.append(l));
+  actions.append(nums, go);
+  a.append(actions);
+
+  // lead with the first picture or video, like a cover image
+  const lead = hasVideo ? mine : mine.slice(0, 1);
+  const later = hasVideo ? [] : mine.slice(1);
+  if (lead.length) a.append(figures(lead));
+
+  if (it.source_title) a.append(el("h3", "sub-h", it.source_title));
+  const by = el("p", "by-orig");
+  by.append(el("b", null, it.kind === "web" ? "From: " : "By: "));
+  by.append(link(it.source_url, who(it)) || document.createTextNode(who(it)));
+  a.append(by);
+  if (it.status === "gone") a.append(el("p", "note", "The original has since been deleted. This is the text we had."));
+  if (it.status === "error") a.append(el("p", "note", "The full article could not be saved. This is our summary of it."));
+  // saved articles keep one line per paragraph; tweets already use blank lines
+  const body = it.kind === "web" && it.status === "ok"
+    ? (it.source_text || "").replace(/\n+/g, "\n\n") : it.source_text;
+  a.append(textBlock(body), figures(later));
+
+  if (it.quoted_text || quoted.length) {
+    const q = el("div", (it.quoted_text || "").length > 1800 ? "quote article" : "quote");
+    q.append(el("p", "who", "Quoting" + (it.quoted_author ? " @" + it.quoted_author : " another post")),
+             textBlock(it.quoted_text));
+    a.append(q, figures(quoted));
+  }
+  const end = el("div", "endbar");
+  [link(it.our_url, "Open our post on X", "primary"),
+   link(it.source_url, it.kind === "web" ? "Read it on " + it.source_author : "Open the original on X")]
+    .forEach((l) => l && end.append(l));
+  a.append(end);
+
+  $("#sheet").replaceChildren(top, a);
+  history.replaceState(null, "", "#" + it.id);
+  $("#dlg").showModal();
+  $("#dlg").scrollTop = 0;
+}
+$("#dlg").addEventListener("close", () => {
+  $("#sheet").querySelectorAll("video").forEach((v) => v.pause());
+  history.replaceState(null, "", location.pathname + location.search);
+});
+document.querySelectorAll(".strip button").forEach((b) => b.onclick = () => {
+  filter = b.dataset.f;
+  document.querySelectorAll(".strip button").forEach((x) => x.setAttribute("aria-pressed", x === b));
+  draw();
+});
+fetch("data.json").then((r) => r.json()).then((d) => {
+  items = d.items || [];
+  draw();
+  const want = items.find((it) => String(it.id) === location.hash.slice(1));
+  if (want) open(want);
+}).catch(() => { $("#grid").replaceChildren(el("p", "empty", "Could not load the archive.")); });
+</script>
+</body>
+</html>

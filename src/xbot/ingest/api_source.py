@@ -307,6 +307,31 @@ class ApiSourceAdapter:
             )
         return out
 
+    def fetch_full(self, ids: list[str]) -> tuple[dict[str, dict], set[str]]:
+        """Full content of known tweets for `xbot archive`: long-form text
+        (`note_tweet`), X article text, real link addresses, picture URLs and video files. PAID: ~$0.005 per post returned.
+        Returns ({id: {...}}, gone_ids) — see archive.parse_tweets."""
+        from ..archive import parse_tweets
+
+        found: dict[str, dict] = {}
+        gone: set[str] = set()
+        session = self._session()
+        for i in range(0, len(ids), 100):
+            resp = session.get(f"{API_BASE}/tweets", params={
+                "ids": ",".join(ids[i:i + 100]),
+                "tweet.fields": ("created_at,note_tweet,attachments,referenced_tweets,"
+                                 "author_id,entities,article"),
+                "expansions": ("attachments.media_keys,author_id,article.cover_media,"
+                               "article.media_entities"),
+                "media.fields": "url,preview_image_url,type,alt_text,variants",
+                "user.fields": "username",
+            }, timeout=30)
+            resp.raise_for_status()
+            f, g = parse_tweets(resp.json())
+            found.update(f)
+            gone |= g
+        return found, gone
+
     def fetch_me(self) -> dict:
         """Own-account public metrics (~$0.001 owned read) — the follower trend
         is THE success metric for the growth work; everything else is a proxy."""

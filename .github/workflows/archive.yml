@@ -1,0 +1,43 @@
+name: archive
+
+# Keeps the public archive site current: fetch the originals of anything newly
+# posted, upload their pictures/videos to R2, redeploy the Pages site.
+# Secrets: the X + Turso ones the other workflows use, plus
+# CLOUDFLARE_API_TOKEN (Pages edit + R2 edit) and CLOUDFLARE_ACCOUNT_ID.
+
+on:
+  schedule:
+    - cron: "40 5 * * *"     # daily, after the last PT publish window
+  workflow_dispatch:
+
+concurrency:
+  group: archive
+  cancel-in-progress: false
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -e ".[x,turso,archive]"
+      - name: Archive new posts and publish the site
+        env:
+          X_API_KEY: ${{ secrets.X_API_KEY }}
+          X_API_SECRET: ${{ secrets.X_API_SECRET }}
+          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+          X_USER_ID: ${{ secrets.X_USER_ID }}
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          scripts/archive_sync.sh pull
+          xbot archive --site
+          scripts/archive_sync.sh push
+          scripts/archive_sync.sh deploy
