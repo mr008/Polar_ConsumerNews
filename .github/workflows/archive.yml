@@ -5,7 +5,14 @@ name: archive
 # Secrets: the X + Turso ones the other workflows use, plus
 # CLOUDFLARE_API_TOKEN (Pages edit + R2 edit) and CLOUDFLARE_ACCOUNT_ID.
 
+# Runs right after every publish run, so an original is saved minutes after we
+# post about it (pages get deleted or paywalled later). The daily run is the
+# safety net for anything a post-publish run missed.
+
 on:
+  workflow_run:
+    workflows: ["publish"]
+    types: [completed]
   schedule:
     - cron: "40 5 * * *"     # daily, after the last PT publish window
   workflow_dispatch:
@@ -16,6 +23,7 @@ concurrency:
 
 jobs:
   archive:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: read

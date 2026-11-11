@@ -54,7 +54,7 @@ The archive is PUBLIC at https://polarbeargrowth.pages.dev (Cloudflare Pages pro
 `polarbeargrowth`; pictures/videos + `state/archive.db` in R2 bucket `polar-archive`).
 `site/public/` is the served page, `site/functions/media/` serves R2 files, and
 `scripts/archive_sync.sh pull|push|deploy` moves data. The `archive` workflow runs
-all of it daily (05:40 UTC; secrets `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`).
+all of it right after every publish run and daily (05:40 UTC; secrets `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`).
 Article text cleanup lives in `archive.extract_article` (tests: `tests/test_archive.py`).
 `list-sync` builds/refreshes a PRIVATE curated read-List from author yield (keep =
 ever-posted or ever-scored >= --min-qw) so collection reads only worthwhile authors
