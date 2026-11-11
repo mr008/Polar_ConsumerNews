@@ -633,16 +633,36 @@ def _sibling_html(get, html: str, url: str) -> str | None:
         return None
 
 
-def _archive_web(conn, out, get, todo, stats, log) -> None:
+def _read_article(get, url: str) -> dict:
+    body, _ = get(url)
+    html = body.decode("utf-8", errors="replace")
+    art = extract_article(html, url, sibling_html=_sibling_html(get, html, url))
+    if not art["text"]:
+        raise ValueError("page returned no readable text")
+    return art
+
+
+def _saved_article(repo, it: dict) -> dict | None:
+    """The article from the page web-content kept when the bot first read it —
+    the fallback when the site has since deleted or locked the page."""
+    from .ingest.web_articles import load_page
+    html = load_page(repo, it["source_id"])
+    art = extract_article(html, it["source_url"]) if html else None
+    return art if art and art["text"] else None
+
+
+def _archive_web(conn, out, get, todo, stats, log, repo=None) -> None:
     for it in todo:
         now = utcnow().isoformat()
         try:
-            body, _ = get(it["source_url"])
-            html = body.decode("utf-8", errors="replace")
-            art = extract_article(html, it["source_url"],
-                                  sibling_html=_sibling_html(get, html, it["source_url"]))
-            if not art["text"]:
-                raise ValueError("page returned no readable text")
+            try:
+                art = _read_article(get, it["source_url"])
+            except Exception:
+                art = _saved_article(repo, it) if repo is not None else None
+                if art is None:
+                    raise
+                log(f"  [archive] {it['source_url']} — site unavailable; used the "
+                    "page saved when we read it")
         except Exception as e:
             conn.execute("UPDATE items SET status='error', status_note=?, fetched_at=? "
                          "WHERE id=?", (str(e)[:300], now, it["id"]))
@@ -689,7 +709,7 @@ def build_archive(repo, source, out_dir, http_get=http_get, limit: int | None = 
                 stats["x_error"] = str(e)[:300]
                 log(f"  [archive] X read failed — videos not added: {stats['x_error']}")
         _archive_web(conn, out, http_get, [t for t in todo if t["kind"] == "web"],
-                     stats, log)
+                     stats, log, repo=repo)
         counts = {r["status"]: r["n"] for r in conn.execute(
             "SELECT status, COUNT(*) n FROM items GROUP BY status").fetchall()}
         stats.update(total=sum(counts.values()), by_status=counts,

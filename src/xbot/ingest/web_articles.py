@@ -8,10 +8,12 @@ call per NEW article (Haiku, ~$0.003). No X reads. Runs on its own light cadence
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import os
 import re
 import time
+import zlib
 from urllib.parse import urlparse
 
 from ..models import WEB_ID_PREFIX, Post, utcnow
@@ -75,22 +77,62 @@ def find_article_candidates(queries, key, *, provider="brave", per_query=15,
     return [(u, v["title"], v["blurb"]) for u, v in out.items()]
 
 
-def _fetch_text(url: str, timeout: float = 15.0) -> str:
-    """Best-effort full-article text (httpx + crude HTML strip). Returns "" on any
-    failure — the summarizer then falls back to the search blurb."""
+def _fetch_html(url: str, timeout: float = 15.0) -> str:
+    """The raw page, or "" on any failure."""
     try:
         import httpx  # lazy: only the live web-content path needs it
 
         resp = httpx.get(url, timeout=timeout, follow_redirects=True,
                          headers={"User-Agent": "Mozilla/5.0 (compatible; xbot/1.0)"})
         resp.raise_for_status()
-        html = resp.text
+        return resp.text
     except Exception:
         return ""
+
+
+_pages: dict[str, str] = {}      # url -> raw page from this run's reads (see page_read)
+
+
+def _fetch_text(url: str, timeout: float = 15.0) -> str:
+    """Best-effort full-article text (httpx + crude HTML strip). Returns "" on any
+    failure — the summarizer then falls back to the search blurb. The raw page is
+    held for page_read so an accepted article can be kept for the archive."""
+    html = _fetch_html(url, timeout)
+    if html:
+        _pages[url] = html
     html = re.sub(r"(?is)<(script|style|noscript|nav|footer|header|form)[^>]*>.*?</\1>",
                   " ", html)
     text = re.sub(r"(?s)<[^>]+>", " ", html)
     return re.sub(r"\s+", " ", text).strip()
+
+
+def page_read(url: str) -> str:
+    """The raw page _fetch_text read for `url` this run ("" if none); handed over
+    once."""
+    return _pages.pop(url, "")
+
+
+# The page as it was when we read it, kept in the shared state table so `xbot
+# archive` still has the original if the site deletes or locks it before the
+# archive gets there. Value = "<YYYY-MM-DD>\n<base64 of zlib>"; the date lets
+# collect_web prune old ones (Repository.delete_state_before).
+PAGE_KEY = "web_page:"
+MAX_PAGE_CHARS = 2_000_000
+
+
+def save_page(repo, wid: str, html: str, day: str | None = None) -> None:
+    packed = base64.b64encode(zlib.compress(html[:MAX_PAGE_CHARS].encode("utf-8"), 9))
+    repo.set_state(PAGE_KEY + wid,
+                   f"{day or utcnow().date().isoformat()}\n{packed.decode('ascii')}")
+
+
+def load_page(repo, wid: str) -> str:
+    """The saved page for a web candidate id, or "" (none saved, or unreadable)."""
+    try:
+        _, _, packed = repo.get_state(PAGE_KEY + wid, "").partition("\n")
+        return zlib.decompress(base64.b64decode(packed)).decode("utf-8") if packed else ""
+    except Exception:
+        return ""
 
 
 _SUMMARY_SYSTEM = (

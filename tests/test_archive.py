@@ -748,3 +748,23 @@ def test_parse_tweets_picks_the_best_video_that_is_not_oversized():
 def test_parse_tweets_takes_the_smallest_video_when_all_are_oversized():
     found, _ = parse_tweets(_video_json([25128000, 10368000]))
     assert found["31"]["media"][1]["url"] == "https://video.twimg.com/10368000.mp4"
+
+
+def test_archive_uses_the_page_saved_at_read_time_when_the_site_is_gone(tmp_path):
+    from xbot.ingest.web_articles import save_page
+    repo = _repo()
+    _seed(repo, "web:abc", "502", url="https://site.com/blog/hooks")
+    save_page(repo, "web:abc", ARTICLE_HTML, day="2026-11-10")
+    build_archive(repo, None, tmp_path, http_get=FakeWeb({}), log=lambda *_: None)
+    row = _rows(tmp_path, "SELECT status, source_text, source_title FROM items")[0]
+    assert row["status"] == "ok"
+    assert "Write ten hooks per product." in row["source_text"]
+    assert row["source_title"] == "Ten hooks that work"
+
+
+def test_archive_reports_the_fetch_error_when_no_page_was_saved(tmp_path):
+    repo = _repo()
+    _seed(repo, "web:abc", "502", url="https://site.com/blog/hooks")
+    build_archive(repo, None, tmp_path, http_get=FakeWeb({}), log=lambda *_: None)
+    row = _rows(tmp_path, "SELECT status, status_note FROM items")[0]
+    assert row["status"] == "error" and "404" in row["status_note"]

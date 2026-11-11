@@ -857,3 +857,11 @@ class SqliteRepository:
             (key, json.dumps(value) if not isinstance(value, str) else value),
         )
         self.conn.commit()
+
+    def delete_state_before(self, prefix: str, day: str) -> None:
+        """Drop dated state rows (value starts "YYYY-MM-DD") under `prefix` that
+        are older than `day` — e.g. the pages web-content keeps for the archive."""
+        self.conn.execute(
+            "DELETE FROM state WHERE substr(key, 1, ?) = ? AND substr(value, 1, 10) < ?",
+            (len(prefix), prefix, day))
+        self.conn.commit()

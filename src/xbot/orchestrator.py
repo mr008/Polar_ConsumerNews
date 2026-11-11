@@ -7,6 +7,7 @@ by mode.autonomous.
 from __future__ import annotations
 
 import os
+from datetime import timedelta
 
 from .commentary import check_commentary, get_generator, get_prescreen
 from .commentary.generate import (LLMUnavailable, llm_key_available,
@@ -14,7 +15,7 @@ from .commentary.generate import (LLMUnavailable, llm_key_available,
 from .config import NS, kill_switch_active
 from .dedup import author_in_cooldown, is_near_duplicate
 from .ingest import SampleSource
-from .models import Draft, Post, Score, is_web_source
+from .models import Draft, Post, Score, is_web_source, utcnow
 from .publish import get_publisher
 from .publish.publisher import AccountError
 from .score import score_posts
@@ -243,6 +244,7 @@ class Orchestrator:
         if not key:
             print("  [web-content] SEARCH_API_KEY unset — skipped")
             return 0
+        from .ingest import web_articles as wa
         from .ingest.web_articles import (find_article_candidates, summarize_article,
                                           to_web_post, web_id)
         cands = find_article_candidates(
@@ -253,7 +255,7 @@ class Orchestrator:
             pause=float(cfg.get("webcontent.query_pause_seconds", 0) or 0))
         cap = int(cfg.get("webcontent.max_new_per_run", 3))
         min_chars = int(cfg.get("webcontent.min_article_chars", 400))
-        posts, added, seen, rejected = [], 0, 0, 0
+        posts, added, seen, rejected, kept = [], 0, 0, 0, 0
         for url, title, blurb in cands:
             if added >= cap:
                 break
@@ -271,9 +273,19 @@ class Orchestrator:
                 continue
             posts.append(to_web_post(url, brief))
             added += 1
+            page = wa.page_read(url)
+            if page:                           # keep the original for `xbot archive`
+                try:
+                    wa.save_page(self.repo, wid, page)
+                    kept += 1
+                except Exception as e:         # never lose a candidate over this
+                    print(f"  [web-content] page not saved ({type(e).__name__}): {url[:60]}")
         self._store(posts)
+        self.repo.delete_state_before(
+            wa.PAGE_KEY, (utcnow() - timedelta(days=30)).date().isoformat())
         print(f"  [web-content] {len(cands)} search results: {seen} seen before, "
-              f"{rejected} newly rejected, {added} added")
+              f"{rejected} newly rejected, {added} added "
+              f"({kept} page(s) kept for the archive)")
         self.repo.log_run("collect", read=0, detail=f"web content: +{added} of "
                           f"{len(cands)} candidates")
         if posts:

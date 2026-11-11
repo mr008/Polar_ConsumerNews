@@ -174,3 +174,47 @@ def test_collect_web_remembers_rejections_but_retries_errors(tmp_path, monkeypat
 def test_summarize_article_too_thin_is_a_rejection_not_an_error(monkeypatch):
     monkeypatch.setattr(wa, "_fetch_text", lambda url, timeout=15.0: "")
     assert wa.summarize_article("t", "short blurb", "https://b.dev/x", NS({})) == ""
+
+
+# ------------------------- keeping the page we read (for `xbot archive`) -------------------------
+
+PAGE = "<html><body><article><h1>Héllo</h1><p>Ten hooks — tested.</p></article></body></html>"
+
+
+def test_reading_an_article_remembers_its_raw_page(monkeypatch):
+    monkeypatch.setattr(wa, "_fetch_html", lambda url, timeout=15.0: PAGE)
+    assert "Ten hooks" in wa._fetch_text("https://b.dev/1")
+    assert wa.page_read("https://b.dev/1") == PAGE
+    assert wa.page_read("https://b.dev/1") == ""        # handed over once, not kept
+
+
+def test_saved_page_round_trips_through_storage(tmp_path):
+    repo = _repo(tmp_path)
+    wa.save_page(repo, "web:abc", PAGE, day="2026-11-10")
+    assert wa.load_page(repo, "web:abc") == PAGE
+    assert wa.load_page(repo, "web:other") == ""
+
+
+def test_old_saved_pages_are_pruned_and_nothing_else(tmp_path):
+    repo = _repo(tmp_path)
+    wa.save_page(repo, "web:old", PAGE, day="2026-09-01")
+    wa.save_page(repo, "web:new", PAGE, day="2026-11-10")
+    repo.set_state("web_skip:web:old", "1")
+    repo.delete_state_before("web_page:", "2026-10-11")
+    assert wa.load_page(repo, "web:old") == ""
+    assert wa.load_page(repo, "web:new") == PAGE
+    assert repo.get_state("web_skip:web:old") == "1"
+
+
+def test_collect_web_saves_the_page_of_each_accepted_article(tmp_path, monkeypatch):
+    monkeypatch.setenv("SEARCH_API_KEY", "key")
+    repo = _repo(tmp_path)
+    monkeypatch.setattr(wa, "find_article_candidates", lambda *a, **k: [
+        ("https://b.dev/1", "t1", "b1"), ("https://b.dev/2", "t2", "b2")])
+    monkeypatch.setattr(wa, "summarize_article",
+                        lambda title, blurb, url, cfg, min_chars=400:
+                        "brief one" if url.endswith("/1") else "")
+    monkeypatch.setattr(wa, "page_read", lambda url: PAGE)
+    _orch(repo).collect_web()
+    assert wa.load_page(repo, wa.web_id("https://b.dev/1")) == PAGE
+    assert wa.load_page(repo, wa.web_id("https://b.dev/2")) == ""   # rejected: not kept
